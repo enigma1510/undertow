@@ -305,6 +305,11 @@ public class UndertowOptions {
      */
     public static final Option<Boolean> SSL_USER_CIPHER_SUITES_ORDER = Option.simple(UndertowOptions.class, "SSL_USER_CIPHER_SUITES_ORDER", Boolean.class);
 
+    /**
+     * If non-persistent HTTP1.1 responses with unknown length should be chunk encoded
+     */
+    public static final Option<Boolean> CHUNK_NONPERSISTENT_HTTP11_RESPONSES = Option.simple(UndertowOptions.class, "CHUNK_NONPERSISTENT_HTTP11_RESPONSES", Boolean.class);
+
     private UndertowOptions() {
 
     }

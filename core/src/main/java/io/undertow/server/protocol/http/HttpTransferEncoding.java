@@ -268,9 +268,8 @@ class HttpTransferEncoding {
 
         if (transferEncodingHeader == null) {
             if (exchange.isHttp11()) {
-                if (exchange.isPersistent()) {
+                if (exchange.isPersistent() || exchange.getConnection().getUndertowOptions().get(UndertowOptions.CHUNK_NONPERSISTENT_HTTP11_RESPONSES, false)) {
                     responseHeaders.put(Headers.TRANSFER_ENCODING, Headers.CHUNKED.toString());
-
                     if (headRequest) {
                         return channel;
                     }
