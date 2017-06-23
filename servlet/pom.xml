@@ -25,12 +25,12 @@
     <parent>
         <groupId>io.undertow</groupId>
         <artifactId>undertow-parent</artifactId>
-        <version>1.4.17.Final-SNAPSHOT</version>
+        <version>1.4.17.TIO-Final-SNAPSHOT</version>
     </parent>
 
     <groupId>io.undertow</groupId>
     <artifactId>undertow-servlet</artifactId>
-    <version>1.4.17.Final-SNAPSHOT</version>
+    <version>1.4.17.TIO-Final-SNAPSHOT</version>
 
     <name>Undertow Servlet</name>
 

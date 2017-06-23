@@ -28,7 +28,7 @@
 
     <groupId>io.undertow</groupId>
     <artifactId>undertow-parent</artifactId>
-    <version>1.4.17.Final-SNAPSHOT</version>
+    <version>1.4.17.TIO-Final-SNAPSHOT</version>
 
     <name>Undertow</name>
     <description>Undertow</description>
@@ -122,6 +122,17 @@
         <module>examples</module>
         <module>websockets-jsr</module>
     </modules>
+
+    <distributionManagement>
+        <repository>
+            <id>tenable-cloud-release</id>
+            <url>https://nexus.cloud.aws.tenablesecurity.com/content/repositories/tenable-cloud-release</url>
+        </repository>
+        <snapshotRepository>
+            <id>tenable-cloud-snapshots</id>
+            <url>https://nexus.cloud.aws.tenablesecurity.com/content/repositories/tenable-cloud-snapshots</url>
+        </snapshotRepository>
+    </distributionManagement>
 
     <build>
         <plugins>
