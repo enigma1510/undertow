@@ -452,6 +452,18 @@
 
     <repositories>
         <repository>
+            <id>tenable-cloud-release</id>
+            <url>https://nexus.cloud.aws.tenablesecurity.com/content/repositories/tenable-cloud-release</url>
+        </repository>
+        <repository>
+            <id>tenable-cloud-snapshots</id>
+            <url>https://nexus.cloud.aws.tenablesecurity.com/content/repositories/tenable-cloud-snapshots</url>
+        </repository>
+        <repository>
+            <id>tenable-cloud-central</id>
+            <url>https://nexus.cloud.aws.tenablesecurity.com/content/repositories/central</url>
+        </repository>
+        <repository>
             <id>jboss-public-repository-group</id>
             <name>JBoss Public Repository Group</name>
             <url>http://repository.jboss.org/nexus/content/groups/public/</url>
