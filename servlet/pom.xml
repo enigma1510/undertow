@@ -30,7 +30,7 @@
 
     <groupId>io.undertow</groupId>
     <artifactId>undertow-servlet</artifactId>
-    <version>1.4.17.Final-TIO-SNAPSHOT</version>
+    <version>1.4.17.Final-SNAPSHOT</version>
 
     <name>Undertow Servlet</name>
 
