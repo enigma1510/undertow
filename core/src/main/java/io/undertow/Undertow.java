@@ -18,6 +18,7 @@
 
 package io.undertow;
 
+import io.undertow.connector.ByteBufferPool;
 import io.undertow.protocols.ssl.UndertowXnioSsl;
 import io.undertow.server.ConnectorStatistics;
 import io.undertow.server.DefaultByteBufferPool;
@@ -27,25 +28,24 @@ import io.undertow.server.protocol.ajp.AjpOpenListener;
 import io.undertow.server.protocol.http.AlpnOpenListener;
 import io.undertow.server.protocol.http.HttpOpenListener;
 import io.undertow.server.protocol.http2.Http2OpenListener;
+import io.undertow.server.protocol.http2.Http2UpgradeHandler;
+import io.undertow.server.protocol.proxy.ProxyProtocolOpenListener;
 import org.xnio.ChannelListener;
 import org.xnio.ChannelListeners;
 import org.xnio.IoUtils;
 import org.xnio.Option;
 import org.xnio.OptionMap;
 import org.xnio.Options;
-import io.undertow.connector.ByteBufferPool;
-import io.undertow.server.protocol.http2.Http2UpgradeHandler;
 import org.xnio.StreamConnection;
 import org.xnio.Xnio;
 import org.xnio.XnioWorker;
 import org.xnio.channels.AcceptingChannel;
 import org.xnio.ssl.JsseSslUtils;
-import org.xnio.ssl.SslConnection;
-import org.xnio.ssl.XnioSsl;
 
 import javax.net.ssl.KeyManager;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
+import java.io.IOException;
 import java.net.Inet4Address;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
@@ -77,22 +77,24 @@ public final class Undertow {
      * Will be true when a {@link XnioWorker} instance was NOT provided to the {@link Builder}.
      * When true, a new worker will be created during {@link Undertow#start()},
      * and shutdown when {@link Undertow#stop()} is called.
-     *
+     * <p>
      * Will be false when a {@link XnioWorker} instance was provided to the {@link Builder}.
      * When false, the provided {@link #worker} will be used instead of creating a new one in {@link Undertow#start()}.
      * Also, when false, the {@link #worker} will NOT be shutdown when {@link Undertow#stop()} is called.
      */
     private final boolean internalWorker;
 
+    private ByteBufferPool byteBufferPool;
     private XnioWorker worker;
     private List<AcceptingChannel<? extends StreamConnection>> channels;
     private Xnio xnio;
 
     private Undertow(Builder builder) {
-        this.bufferSize = builder.bufferSize;
+        this.byteBufferPool = builder.byteBufferPool;
+        this.bufferSize = byteBufferPool != null ? byteBufferPool.getBufferSize() : builder.bufferSize;
+        this.directBuffers = byteBufferPool != null ? byteBufferPool.isDirect() : builder.directBuffers;
         this.ioThreads = builder.ioThreads;
         this.workerThreads = builder.workerThreads;
-        this.directBuffers = builder.directBuffers;
         this.listeners.addAll(builder.listeners);
         this.rootHandler = builder.handler;
         this.worker = builder.worker;
@@ -143,7 +145,10 @@ public final class Undertow {
                     .getMap();
 
 
-            ByteBufferPool buffers = new DefaultByteBufferPool(directBuffers, bufferSize, -1, 4);
+            ByteBufferPool buffers = this.byteBufferPool;
+            if (buffers == null) {
+                buffers = new DefaultByteBufferPool(directBuffers, bufferSize, -1, 4);
+            }
 
             listenerInfo = new ArrayList<>();
             for (ListenerConfig listener : listeners) {
@@ -152,37 +157,51 @@ public final class Undertow {
                 if (listener.type == ListenerType.AJP) {
                     AjpOpenListener openListener = new AjpOpenListener(buffers, serverOptions);
                     openListener.setRootHandler(rootHandler);
-                    ChannelListener<AcceptingChannel<StreamConnection>> acceptListener = ChannelListeners.openListenerAdapter(openListener);
+
+                    final ChannelListener<StreamConnection> finalListener;
+                    if (listener.useProxyProtocol) {
+                        finalListener = new ProxyProtocolOpenListener(openListener, null, buffers, OptionMap.EMPTY);
+                    } else {
+                        finalListener = openListener;
+                    }
+                    ChannelListener<AcceptingChannel<StreamConnection>> acceptListener = ChannelListeners.openListenerAdapter(finalListener);
                     OptionMap socketOptionsWithOverrides = OptionMap.builder().addAll(socketOptions).addAll(listener.overrideSocketOptions).getMap();
                     AcceptingChannel<? extends StreamConnection> server = worker.createStreamConnectionServer(new InetSocketAddress(Inet4Address.getByName(listener.host), listener.port), acceptListener, socketOptionsWithOverrides);
                     server.resumeAccepts();
                     channels.add(server);
-                    listenerInfo.add(new ListenerInfo("ajp", server.getLocalAddress(), null, openListener));
+                    listenerInfo.add(new ListenerInfo("ajp", server.getLocalAddress(), openListener, null, server));
                 } else {
                     OptionMap undertowOptions = OptionMap.builder().set(UndertowOptions.BUFFER_PIPELINED_DATA, true).addAll(serverOptions).getMap();
                     boolean http2 = serverOptions.get(UndertowOptions.ENABLE_HTTP2, false);
                     if (listener.type == ListenerType.HTTP) {
                         HttpOpenListener openListener = new HttpOpenListener(buffers, undertowOptions);
                         HttpHandler handler = rootHandler;
-                        if(http2) {
+                        if (http2) {
                             handler = new Http2UpgradeHandler(handler);
                         }
                         openListener.setRootHandler(handler);
-                        ChannelListener<AcceptingChannel<StreamConnection>> acceptListener = ChannelListeners.openListenerAdapter(openListener);
+                        final ChannelListener<StreamConnection> finalListener;
+                        if (listener.useProxyProtocol) {
+                            finalListener = new ProxyProtocolOpenListener(openListener, null, buffers, OptionMap.EMPTY);
+                        } else {
+                            finalListener = openListener;
+                        }
+
+                        ChannelListener<AcceptingChannel<StreamConnection>> acceptListener = ChannelListeners.openListenerAdapter(finalListener);
                         OptionMap socketOptionsWithOverrides = OptionMap.builder().addAll(socketOptions).addAll(listener.overrideSocketOptions).getMap();
                         AcceptingChannel<? extends StreamConnection> server = worker.createStreamConnectionServer(new InetSocketAddress(Inet4Address.getByName(listener.host), listener.port), acceptListener, socketOptionsWithOverrides);
                         server.resumeAccepts();
                         channels.add(server);
-                        listenerInfo.add(new ListenerInfo("http", server.getLocalAddress(), null, openListener));
+                        listenerInfo.add(new ListenerInfo("http", server.getLocalAddress(), openListener, null, server));
                     } else if (listener.type == ListenerType.HTTPS) {
                         OpenListener openListener;
 
                         HttpOpenListener httpOpenListener = new HttpOpenListener(buffers, undertowOptions);
                         httpOpenListener.setRootHandler(rootHandler);
 
-                        if(http2) {
+                        if (http2) {
                             AlpnOpenListener alpn = new AlpnOpenListener(buffers, undertowOptions, httpOpenListener);
-                            if(http2) {
+                            if (http2) {
                                 Http2OpenListener http2Listener = new Http2OpenListener(buffers, undertowOptions);
                                 http2Listener.setRootHandler(rootHandler);
                                 alpn.addProtocol(Http2OpenListener.HTTP2, http2Listener, 10);
@@ -192,25 +211,41 @@ public final class Undertow {
                         } else {
                             openListener = httpOpenListener;
                         }
-                        ChannelListener<AcceptingChannel<StreamConnection>> acceptListener = ChannelListeners.openListenerAdapter(openListener);
-                        XnioSsl xnioSsl;
+
+                        UndertowXnioSsl xnioSsl;
                         if (listener.sslContext != null) {
                             xnioSsl = new UndertowXnioSsl(xnio, OptionMap.create(Options.USE_DIRECT_BUFFERS, true), listener.sslContext);
                         } else {
-
-                            xnioSsl = new UndertowXnioSsl(xnio, OptionMap.create(Options.USE_DIRECT_BUFFERS, true), JsseSslUtils.createSSLContext(listener.keyManagers, listener.trustManagers, new SecureRandom(), OptionMap.create(Options.USE_DIRECT_BUFFERS, true)));
+                            OptionMap.Builder builder = OptionMap.builder();
+                            builder.addAll(listener.overrideSocketOptions);
+                            if (!listener.overrideSocketOptions.contains(Options.SSL_PROTOCOL)) {
+                                builder.set(Options.SSL_PROTOCOL, "TLSv1.2");
+                            }
+                            xnioSsl = new UndertowXnioSsl(xnio, OptionMap.create(Options.USE_DIRECT_BUFFERS, true), JsseSslUtils.createSSLContext(listener.keyManagers, listener.trustManagers, new SecureRandom(), builder.getMap()));
                         }
+
                         OptionMap socketOptionsWithOverrides = OptionMap.builder().addAll(socketOptions).addAll(listener.overrideSocketOptions).getMap();
-                        AcceptingChannel<SslConnection> sslServer = xnioSsl.createSslConnectionServer(worker, new InetSocketAddress(Inet4Address.getByName(listener.host), listener.port), (ChannelListener) acceptListener, socketOptionsWithOverrides);
+                        AcceptingChannel<? extends StreamConnection> sslServer;
+                        if (listener.useProxyProtocol) {
+                            ChannelListener<AcceptingChannel<StreamConnection>> acceptListener = ChannelListeners.openListenerAdapter(new ProxyProtocolOpenListener(openListener, xnioSsl, buffers, socketOptionsWithOverrides));
+                            sslServer = worker.createStreamConnectionServer(new InetSocketAddress(Inet4Address.getByName(listener.host), listener.port), (ChannelListener) acceptListener, socketOptionsWithOverrides);
+                        } else {
+                            ChannelListener<AcceptingChannel<StreamConnection>> acceptListener = ChannelListeners.openListenerAdapter(openListener);
+                            sslServer = xnioSsl.createSslConnectionServer(worker, new InetSocketAddress(Inet4Address.getByName(listener.host), listener.port), (ChannelListener) acceptListener, socketOptionsWithOverrides);
+                        }
+
                         sslServer.resumeAccepts();
                         channels.add(sslServer);
-                        listenerInfo.add(new ListenerInfo("https", sslServer.getLocalAddress(), listener.sslContext, openListener));
+                        listenerInfo.add(new ListenerInfo("https", sslServer.getLocalAddress(), openListener, xnioSsl, sslServer));
                     }
                 }
 
             }
 
         } catch (Exception e) {
+            if(internalWorker && worker != null) {
+                worker.shutdownNow();
+            }
             throw new RuntimeException(e);
         }
     }
@@ -244,12 +279,11 @@ public final class Undertow {
     }
 
     public List<ListenerInfo> getListenerInfo() {
-        if(listenerInfo == null) {
+        if (listenerInfo == null) {
             throw UndertowMessages.MESSAGES.serverNotStarted();
         }
         return Collections.unmodifiableList(listenerInfo);
     }
-
 
 
     public enum ListenerType {
@@ -259,6 +293,7 @@ public final class Undertow {
     }
 
     private static class ListenerConfig {
+
         final ListenerType type;
         final int port;
         final String host;
@@ -267,6 +302,7 @@ public final class Undertow {
         final SSLContext sslContext;
         final HttpHandler rootHandler;
         final OptionMap overrideSocketOptions;
+        final boolean useProxyProtocol;
 
         private ListenerConfig(final ListenerType type, final int port, final String host, KeyManager[] keyManagers, TrustManager[] trustManagers, HttpHandler rootHandler) {
             this.type = type;
@@ -277,6 +313,7 @@ public final class Undertow {
             this.rootHandler = rootHandler;
             this.sslContext = null;
             this.overrideSocketOptions = OptionMap.EMPTY;
+            this.useProxyProtocol = false;
         }
 
         private ListenerConfig(final ListenerType type, final int port, final String host, SSLContext sslContext, HttpHandler rootHandler) {
@@ -288,6 +325,7 @@ public final class Undertow {
             this.trustManagers = null;
             this.sslContext = sslContext;
             this.overrideSocketOptions = OptionMap.EMPTY;
+            this.useProxyProtocol = false;
         }
 
         private ListenerConfig(final ListenerBuilder listenerBuilder) {
@@ -299,10 +337,12 @@ public final class Undertow {
             this.trustManagers = listenerBuilder.trustManagers;
             this.sslContext = listenerBuilder.sslContext;
             this.overrideSocketOptions = listenerBuilder.overrideSocketOptions;
+            this.useProxyProtocol = listenerBuilder.useProxyProtocol;
         }
     }
 
     public static final class ListenerBuilder {
+
         ListenerType type;
         int port;
         String host;
@@ -311,6 +351,7 @@ public final class Undertow {
         SSLContext sslContext;
         HttpHandler rootHandler;
         OptionMap overrideSocketOptions = OptionMap.EMPTY;
+        boolean useProxyProtocol;
 
         public ListenerBuilder setType(ListenerType type) {
             this.type = type;
@@ -351,6 +392,11 @@ public final class Undertow {
             this.overrideSocketOptions = overrideSocketOptions;
             return this;
         }
+
+        public ListenerBuilder setUseProxyProtocol(boolean useProxyProtocol) {
+            this.useProxyProtocol = useProxyProtocol;
+            return this;
+        }
     }
 
     public static final class Builder {
@@ -362,6 +408,7 @@ public final class Undertow {
         private final List<ListenerConfig> listeners = new ArrayList<>();
         private HttpHandler handler;
         private XnioWorker worker;
+        private ByteBufferPool byteBufferPool;
 
         private final OptionMap.Builder workerOptions = OptionMap.builder();
         private final OptionMap.Builder socketOptions = OptionMap.builder();
@@ -384,7 +431,7 @@ public final class Undertow {
                 //use 16k buffers for best performance
                 //as 16k is generally the max amount of data that can be sent in a single write() call
                 directBuffers = true;
-                bufferSize = 1024 * 16;
+                bufferSize = 1024 * 16 - 20; //the 20 is to allow some space for protocol headers, see UNDERTOW-1209
             }
 
         }
@@ -449,6 +496,7 @@ public final class Undertow {
             listeners.add(new ListenerConfig(ListenerType.AJP, port, host, null, null, rootHandler));
             return this;
         }
+
         public Builder setBufferSize(final int bufferSize) {
             this.bufferSize = bufferSize;
             return this;
@@ -500,7 +548,7 @@ public final class Undertow {
          * when {@link Undertow#start()} is called.
          * Additionally, this newly created worker will be shutdown when {@link Undertow#stop()} is called.
          * <br/>
-         *
+         * <p>
          * When non-null, the provided {@link XnioWorker} will be reused instead of creating a new {@link XnioWorker}
          * when {@link Undertow#start()} is called.
          * Additionally, the provided {@link XnioWorker} will NOT be shutdown when {@link Undertow#stop()} is called.
@@ -510,20 +558,27 @@ public final class Undertow {
             this.worker = worker;
             return this;
         }
+
+        public <T> Builder setByteBufferPool(ByteBufferPool byteBufferPool) {
+            this.byteBufferPool = byteBufferPool;
+            return this;
+        }
     }
 
     public static class ListenerInfo {
 
         private final String protcol;
         private final SocketAddress address;
-        private final SSLContext sslContext;
         private final OpenListener openListener;
+        private final UndertowXnioSsl ssl;
+        private final AcceptingChannel<? extends StreamConnection> channel;
 
-        public ListenerInfo(String protcol, SocketAddress address, SSLContext sslContext, OpenListener openListener) {
+        public ListenerInfo(String protcol, SocketAddress address, OpenListener openListener, UndertowXnioSsl ssl, AcceptingChannel<? extends StreamConnection> channel) {
             this.protcol = protcol;
             this.address = address;
-            this.sslContext = sslContext;
             this.openListener = openListener;
+            this.ssl = ssl;
+            this.channel = channel;
         }
 
         public String getProtcol() {
@@ -535,11 +590,29 @@ public final class Undertow {
         }
 
         public SSLContext getSslContext() {
-            return sslContext;
+            if(ssl == null) {
+                return null;
+            }
+            return ssl.getSslContext();
+        }
+
+        public void setSslContext(SSLContext sslContext) {
+            if(ssl != null) {
+                //just ignore it if this is not a SSL listener
+                ssl.updateSSLContext(sslContext);
+            }
         }
 
         public ConnectorStatistics getConnectorStatistics() {
             return openListener.getConnectorStatistics();
+        }
+
+        public <T> void setSocketOption(Option<T>option, T value) throws IOException {
+            channel.setOption(option, value);
+        }
+
+        public void setServerOptions(OptionMap options) {
+            openListener.setUndertowOptions(options);
         }
 
         @Override
@@ -547,7 +620,7 @@ public final class Undertow {
             return "ListenerInfo{" +
                     "protcol='" + protcol + '\'' +
                     ", address=" + address +
-                    ", sslContext=" + sslContext +
+                    ", sslContext=" + getSslContext() +
                     '}';
         }
     }

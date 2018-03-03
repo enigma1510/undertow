@@ -206,6 +206,10 @@ final class HttpReadListener implements ChannelListener<ConduitStreamSourceChann
             this.httpServerExchange = null;
             requestStateUpdater.set(this, 1);
 
+            if (recordRequestStartTime) {
+                Connectors.setRequestStartTime(httpServerExchange);
+            }
+
             if(httpServerExchange.getProtocol() == Protocols.HTTP_2_0) {
                 free = handleHttp2PriorKnowledge(pooled, httpServerExchange);
                 return;
@@ -220,9 +224,6 @@ final class HttpReadListener implements ChannelListener<ConduitStreamSourceChann
                 }
             }
             HttpTransferEncoding.setupRequest(httpServerExchange);
-            if (recordRequestStartTime) {
-                Connectors.setRequestStartTime(httpServerExchange);
-            }
             connection.setCurrentExchange(httpServerExchange);
             if(connectorStatistics != null) {
                 connectorStatistics.setup(httpServerExchange);
@@ -252,8 +253,8 @@ final class HttpReadListener implements ChannelListener<ConduitStreamSourceChann
                 return;
             }
             Connectors.executeRootHandler(connection.getRootHandler(), httpServerExchange);
-        } catch (Exception e) {
-            sendBadRequestAndClose(connection.getChannel(), e);
+        } catch (Throwable t) {
+            sendBadRequestAndClose(connection.getChannel(), t);
             return;
         } finally {
             if (free) pooled.close();
@@ -279,7 +280,7 @@ final class HttpReadListener implements ChannelListener<ConduitStreamSourceChann
         }
     }
 
-    private void sendBadRequestAndClose(final StreamConnection connection, final Exception exception) {
+    private void sendBadRequestAndClose(final StreamConnection connection, final Throwable exception) {
         UndertowLogger.REQUEST_IO_LOGGER.failedToParseRequest(exception);
         connection.getSourceChannel().suspendReads();
         new StringWriteChannelListener(BAD_REQUEST) {
@@ -384,6 +385,9 @@ final class HttpReadListener implements ChannelListener<ConduitStreamSourceChann
             } catch (IOException e) {
                 UndertowLogger.REQUEST_IO_LOGGER.ioException(e);
                 IoUtils.safeClose(connection);
+            } catch (Throwable t) {
+                UndertowLogger.REQUEST_IO_LOGGER.handleUnexpectedFailure(t);
+                IoUtils.safeClose(connection);
             }
         }
     }
@@ -424,6 +428,9 @@ final class HttpReadListener implements ChannelListener<ConduitStreamSourceChann
                         doHttp2PriRead(connection, buffer, serverConnection, extraData);
                     } catch (IOException e) {
                         UndertowLogger.REQUEST_IO_LOGGER.ioException(e);
+                        IoUtils.safeClose(connection);
+                    } catch (Throwable t) {
+                        UndertowLogger.REQUEST_IO_LOGGER.handleUnexpectedFailure(t);
                         IoUtils.safeClose(connection);
                     }
                 }

@@ -182,6 +182,15 @@ public class UndertowOptions {
     public static final Option<Boolean> ALLOW_EQUALS_IN_COOKIE_VALUE = Option.simple(UndertowOptions.class, "ALLOW_EQUALS_IN_COOKIE_VALUE", Boolean.class);
 
     /**
+     * If this is true then Undertow will enable RFC6265 compliant cookie validation for Set-Cookie header instead of legacy backward compatible behavior.
+     *
+     * default is false
+     */
+    public static final Option<Boolean> ENABLE_RFC6265_COOKIE_VALIDATION = Option.simple(UndertowOptions.class, "ENABLE_RFC6265_COOKIE_VALIDATION", Boolean.class);
+
+    public static final boolean DEFAULT_ENABLE_RFC6265_COOKIE_VALIDATION = false;
+
+    /**
      * If we should attempt to use SPDY for HTTPS connections.
      *
      * SPDY is no longer supported, use HTTP/2 instead
@@ -244,6 +253,13 @@ public class UndertowOptions {
 
     public static final Option<Integer> HTTP2_SETTINGS_INITIAL_WINDOW_SIZE = Option.simple(UndertowOptions.class, "HTTP2_SETTINGS_INITIAL_WINDOW_SIZE", Integer.class);
     public static final Option<Integer> HTTP2_SETTINGS_MAX_FRAME_SIZE = Option.simple(UndertowOptions.class, "HTTP2_SETTINGS_MAX_FRAME_SIZE", Integer.class);
+
+    /**
+     * Deprecated, as it is effectively a duplicate of MAX_HEADER_SIZE
+     *
+     * @see #MAX_HEADER_SIZE
+     */
+    @Deprecated
     public static final Option<Integer> HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE = Option.simple(UndertowOptions.class, "HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE", Integer.class);
 
     /**
@@ -309,6 +325,8 @@ public class UndertowOptions {
      * If non-persistent HTTP1.1 responses with unknown length should be chunk encoded
      */
     public static final Option<Boolean> CHUNK_NONPERSISTENT_HTTP11_RESPONSES = Option.simple(UndertowOptions.class, "CHUNK_NONPERSISTENT_HTTP11_RESPONSES", Boolean.class);
+
+    public static final Option<Boolean> ALLOW_UNESCAPED_CHARACTERS_IN_URL = Option.simple(UndertowOptions.class,"ALLOW_UNESCAPED_CHARACTERS_IN_URL", Boolean.class);
 
     private UndertowOptions() {
 

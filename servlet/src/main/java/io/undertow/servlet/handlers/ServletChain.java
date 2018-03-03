@@ -18,10 +18,17 @@
 
 package io.undertow.servlet.handlers;
 
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executor;
 
 import io.undertow.server.HttpHandler;
+import io.undertow.server.HttpServerExchange;
+import io.undertow.servlet.core.ManagedFilter;
 import io.undertow.servlet.core.ManagedServlet;
+
+import javax.servlet.DispatcherType;
+import javax.servlet.ServletException;
 
 /**
 * @author Stuart Douglas
@@ -32,17 +39,43 @@ public class ServletChain {
     private final String servletPath;
     private final Executor executor;
     private final boolean defaultServletMapping;
+    private final Map<DispatcherType, List<ManagedFilter>> filters;
 
-    public ServletChain(final HttpHandler handler, final ManagedServlet managedServlet, final String servletPath, boolean defaultServletMapping) {
-        this.handler = handler;
+    public ServletChain(final HttpHandler handler, final ManagedServlet managedServlet, final String servletPath, boolean defaultServletMapping,  Map<DispatcherType, List<ManagedFilter>> filters) {
+        this(handler, managedServlet, servletPath, defaultServletMapping, filters, true);
+    }
+
+    private ServletChain(final HttpHandler originalHandler, final ManagedServlet managedServlet, final String servletPath, boolean defaultServletMapping, Map<DispatcherType, List<ManagedFilter>> filters, boolean wrapHandler) {
+        if (wrapHandler) {
+            this.handler = new HttpHandler() {
+
+                private volatile boolean initDone = false;
+
+                @Override
+                public void handleRequest(HttpServerExchange exchange) throws Exception {
+                    if(!initDone) {
+                        synchronized (this) {
+                            if(!initDone) {
+                                ServletRequestContext src = exchange.getAttachment(ServletRequestContext.ATTACHMENT_KEY);
+                                forceInit(src.getDispatcherType());
+                            }
+                        }
+                    }
+                    originalHandler.handleRequest(exchange);
+                }
+            };
+        } else {
+            this.handler = originalHandler;
+        }
         this.managedServlet = managedServlet;
         this.servletPath = servletPath;
         this.defaultServletMapping = defaultServletMapping;
         this.executor = managedServlet.getServletInfo().getExecutor();
+        this.filters = filters;
     }
 
     public ServletChain(final ServletChain other) {
-        this(other.getHandler(), other.getManagedServlet(), other.getServletPath(), other.isDefaultServletMapping());
+        this(other.getHandler(), other.getManagedServlet(), other.getServletPath(), other.isDefaultServletMapping(), other.filters, false);
     }
 
     public HttpHandler getHandler() {
@@ -67,5 +100,19 @@ public class ServletChain {
 
     public boolean isDefaultServletMapping() {
         return defaultServletMapping;
+    }
+
+    //see UNDERTOW-1132
+    void forceInit(DispatcherType dispatcherType) throws ServletException {
+        if(filters != null) {
+            List<ManagedFilter> list = filters.get(dispatcherType);
+            if(list != null && !list.isEmpty()) {
+                for(int i = 0; i < list.size(); ++i) {
+                    ManagedFilter filter = list.get(i);
+                    filter.forceInit();
+                }
+            }
+        }
+        managedServlet.forceInit();
     }
 }

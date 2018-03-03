@@ -36,6 +36,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
@@ -75,6 +76,7 @@ public class InMemorySessionManager implements SessionManager, SessionManagerSta
     private volatile long longestSessionLifetime = 0;
     private volatile long expiredSessionCount = 0;
     private volatile BigInteger totalSessionLifetime = BigInteger.ZERO;
+    private final AtomicInteger highestSessionCount = new AtomicInteger();
 
     private final boolean statisticsEnabled;
 
@@ -178,18 +180,27 @@ public class InMemorySessionManager implements SessionManager, SessionManagerSta
         } else {
             evictionToken = null;
         }
-        if(statisticsEnabled) {
-            createdSessionCount.incrementAndGet();
-        }
         final SessionImpl session = new SessionImpl(this, sessionID, config, serverExchange.getIoThread(), serverExchange.getConnection().getWorker(), evictionToken, defaultSessionTimeout);
 
         UndertowLogger.SESSION_LOGGER.debugf("Created session with id %s for exchange %s", sessionID, serverExchange);
         sessions.put(sessionID, session);
         config.setSessionId(serverExchange, session.getId());
-        session.lastAccessed = System.currentTimeMillis();
         session.bumpTimeout();
         sessionListeners.sessionCreated(session, serverExchange);
         serverExchange.putAttachment(NEW_SESSION, session);
+
+        if(statisticsEnabled) {
+            createdSessionCount.incrementAndGet();
+            int highest;
+            int sessionSize;
+            do {
+                highest = highestSessionCount.get();
+                sessionSize = sessions.size();
+                if(sessionSize <= highest) {
+                    break;
+                }
+            } while (!highestSessionCount.compareAndSet(highest, sessionSize));
+        }
         return session;
     }
 
@@ -202,7 +213,11 @@ public class InMemorySessionManager implements SessionManager, SessionManagerSta
             }
         }
         String sessionId = config.findSessionId(serverExchange);
-        return getSession(sessionId);
+        InMemorySessionManager.SessionImpl session = (SessionImpl) getSession(sessionId);
+        if(session != null) {
+            session.requestStarted(serverExchange);
+        }
+        return session;
     }
 
     @Override
@@ -283,6 +298,10 @@ public class InMemorySessionManager implements SessionManager, SessionManagerSta
         return maxSize;
     }
 
+    public long getHighestSessionCount() {
+        return highestSessionCount.get();
+    }
+
     @Override
     public long getActiveSessionCount() {
         return sessions.size();
@@ -325,6 +344,7 @@ public class InMemorySessionManager implements SessionManager, SessionManagerSta
     private static class SessionImpl implements Session {
 
 
+        final AttachmentKey<Long> FIRST_REQUEST_ACCESS = AttachmentKey.create(Long.class);
         final InMemorySessionManager sessionManager;
         final ConcurrentMap<String, Object> attributes = new ConcurrentHashMap<>();
         volatile long lastAccessed;
@@ -407,10 +427,10 @@ public class InMemorySessionManager implements SessionManager, SessionManagerSta
                 expireTime = newExpireTime;
                 UndertowLogger.SESSION_LOGGER.tracef("Bumping timeout for session %s to %s", sessionId, expireTime);
                 if(timerCancelKey == null) {
-                    //+500ms, to make sure that the time has actually expired
+                    //+1, to make sure that the time has actually expired
                     //we don't re-schedule every time, as it is expensive
                     //instead when it expires we check if the timeout has been bumped, and if so we re-schedule
-                    timerCancelKey = executor.executeAfter(cancelTask, (maxInactiveInterval * 1000L) + 500L, TimeUnit.MILLISECONDS);
+                    timerCancelKey = executor.executeAfter(cancelTask, (maxInactiveInterval * 1000L) + 1L, TimeUnit.MILLISECONDS);
                 }
             } else {
                 expireTime = -1;
@@ -434,10 +454,20 @@ public class InMemorySessionManager implements SessionManager, SessionManagerSta
             return sessionId;
         }
 
+        void requestStarted(HttpServerExchange serverExchange) {
+            Long existing = serverExchange.getAttachment(FIRST_REQUEST_ACCESS);
+            if(existing == null) {
+                if (!invalid) {
+                    serverExchange.putAttachment(FIRST_REQUEST_ACCESS, System.currentTimeMillis());
+                }
+            }
+        }
+
         @Override
         public void requestDone(final HttpServerExchange serverExchange) {
-            if (!invalid) {
-                lastAccessed = System.currentTimeMillis();
+            Long existing = serverExchange.getAttachment(FIRST_REQUEST_ACCESS);
+            if(existing != null) {
+                lastAccessed = existing;
             }
         }
 

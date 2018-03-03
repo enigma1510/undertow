@@ -29,6 +29,7 @@ import io.undertow.server.ConnectorStatisticsImpl;
 import io.undertow.server.Connectors;
 import io.undertow.server.HttpHandler;
 import io.undertow.server.HttpServerExchange;
+import io.undertow.server.protocol.http.HttpAttachments;
 import io.undertow.util.HeaderMap;
 import io.undertow.util.HeaderValues;
 import io.undertow.util.Headers;
@@ -72,6 +73,7 @@ public class Http2ReceiveListener implements ChannelListener<Http2Channel> {
     private final boolean allowEncodingSlash;
     private final int bufferSize;
     private final int maxParameters;
+    private final boolean recordRequestStartTime;
 
 
 
@@ -94,6 +96,7 @@ public class Http2ReceiveListener implements ChannelListener<Http2Channel> {
         this.allowEncodingSlash = undertowOptions.get(UndertowOptions.ALLOW_ENCODED_SLASH, false);
         this.decode = undertowOptions.get(UndertowOptions.DECODE_URL, true);
         this.maxParameters = undertowOptions.get(UndertowOptions.MAX_PARAMETERS, UndertowOptions.DEFAULT_MAX_PARAMETERS);
+        this.recordRequestStartTime = undertowOptions.get(UndertowOptions.RECORD_REQUEST_START_TIME, false);
         if (undertowOptions.get(UndertowOptions.DECODE_URL, true)) {
             this.encoding = undertowOptions.get(UndertowOptions.URL_CHARSET, StandardCharsets.UTF_8.name());
         } else {
@@ -118,6 +121,9 @@ public class Http2ReceiveListener implements ChannelListener<Http2Channel> {
         } catch (IOException e) {
             UndertowLogger.REQUEST_IO_LOGGER.ioException(e);
             IoUtils.safeClose(channel);
+        } catch (Throwable t) {
+            UndertowLogger.REQUEST_IO_LOGGER.handleUnexpectedFailure(t);
+            IoUtils.safeClose(channel);
         }
     }
 
@@ -139,6 +145,18 @@ public class Http2ReceiveListener implements ChannelListener<Http2Channel> {
 
 
         final HttpServerExchange exchange = new HttpServerExchange(connection, dataChannel.getHeaders(), dataChannel.getResponseChannel().getHeaders(), maxEntitySize);
+        dataChannel.getResponseChannel().setTrailersProducer(new Http2DataStreamSinkChannel.TrailersProducer() {
+            @Override
+            public HeaderMap getTrailers() {
+                return exchange.getAttachment(HttpAttachments.RESPONSE_TRAILERS);
+            }
+        });
+        dataChannel.setTrailersHandler(new Http2StreamSourceChannel.TrailersHandler() {
+            @Override
+            public void handleTrailers(HeaderMap headerMap) {
+                exchange.putAttachment(HttpAttachments.REQUEST_TRAILERS, headerMap);
+            }
+        });
         connection.setExchange(exchange);
         dataChannel.setMaxStreamSize(maxEntitySize);
         exchange.setRequestScheme(exchange.getRequestHeaders().getFirst(SCHEME));
@@ -157,14 +175,9 @@ public class Http2ReceiveListener implements ChannelListener<Http2Channel> {
             channel.sendGoAway(Http2Channel.ERROR_PROTOCOL_ERROR);
             return;
         }
-        try {
-            Connectors.setExchangeRequestPath(exchange, path, encoding, decode, allowEncodingSlash, decodeBuffer, maxParameters);
-        } catch (ParameterLimitException e) {
-            //this can happen if max parameters is exceeded
-            UndertowLogger.REQUEST_IO_LOGGER.debug("Failed to set request path", e);
-            exchange.setStatusCode(StatusCodes.BAD_REQUEST);
-            exchange.endExchange();
-            return;
+
+        if (recordRequestStartTime) {
+            Connectors.setRequestStartTime(exchange);
         }
         SSLSession session = channel.getSslSession();
         if(session != null) {
@@ -190,6 +203,16 @@ public class Http2ReceiveListener implements ChannelListener<Http2Channel> {
             connectorStatistics.setup(exchange);
         }
 
+        try {
+            Connectors.setExchangeRequestPath(exchange, path, encoding, decode, allowEncodingSlash, decodeBuffer, maxParameters);
+        } catch (ParameterLimitException e) {
+            //this can happen if max parameters is exceeded
+            UndertowLogger.REQUEST_IO_LOGGER.debug("Failed to set request path", e);
+            exchange.setStatusCode(StatusCodes.BAD_REQUEST);
+            exchange.endExchange();
+            return;
+        }
+
         //TODO: we should never actually put these into the map in the first place
         exchange.getRequestHeaders().remove(AUTHORITY);
         exchange.getRequestHeaders().remove(PATH);
@@ -212,11 +235,16 @@ public class Http2ReceiveListener implements ChannelListener<Http2Channel> {
         Http2HeadersStreamSinkChannel sink = channel.createInitialUpgradeResponseStream();
         final Http2ServerConnection connection = new Http2ServerConnection(channel, sink, undertowOptions, bufferSize, rootHandler);
 
+
         HeaderMap requestHeaders = new HeaderMap();
         for(HeaderValues hv : initial.getRequestHeaders()) {
             requestHeaders.putAll(hv.getHeaderName(), hv);
         }
         final HttpServerExchange exchange = new HttpServerExchange(connection, requestHeaders, sink.getHeaders(), maxEntitySize);
+        if(initial.getAttachment(HttpAttachments.REQUEST_TRAILERS) != null) {
+            exchange.putAttachment(HttpAttachments.REQUEST_TRAILERS, initial.getAttachment(HttpAttachments.REQUEST_TRAILERS));
+        }
+        Connectors.setRequestStartTime(initial, exchange);
         connection.setExchange(exchange);
         exchange.setRequestScheme(initial.getRequestScheme());
         exchange.setProtocol(initial.getProtocol());
@@ -235,6 +263,13 @@ public class Http2ReceiveListener implements ChannelListener<Http2Channel> {
             exchange.endExchange();
             return;
         }
+        sink.setTrailersProducer(new Http2DataStreamSinkChannel.TrailersProducer() {
+            @Override
+            public HeaderMap getTrailers() {
+                return exchange.getAttachment(HttpAttachments.RESPONSE_TRAILERS);
+            }
+        });
+
 
         SSLSession session = channel.getSslSession();
         if(session != null) {
@@ -264,7 +299,7 @@ public class Http2ReceiveListener implements ChannelListener<Http2Channel> {
 
         // if CONNECT type is used, then we expect :method and :authority to be present only;
         // :scheme and :path must not be present
-        if (headers.get(METHOD).contains(Methods.CONNECT)) {
+        if (headers.get(METHOD).contains(Methods.CONNECT_STRING)) {
             if (headers.contains(SCHEME) || headers.contains(PATH) || headers.count(AUTHORITY) != 1) {
                 return false;
             }

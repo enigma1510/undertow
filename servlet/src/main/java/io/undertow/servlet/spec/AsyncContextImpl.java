@@ -106,6 +106,7 @@ public class AsyncContextImpl implements AsyncContext {
         exchange.dispatch(SameThreadExecutor.INSTANCE, new Runnable() {
             @Override
             public void run() {
+                servletRequestContext.getOriginalRequest().setAsyncCancelled(false);
                 exchange.setDispatchExecutor(null);
                 initialRequestDone();
             }
@@ -284,6 +285,7 @@ public class AsyncContextImpl implements AsyncContext {
         servletRequestContext.getOriginalRequest().asyncRequestDispatched();
         Thread currentThread = Thread.currentThread();
         if (!initialRequestDone && currentThread == initiatingThread) {
+            servletRequestContext.getOriginalRequest().setAsyncCancelled(true);
             //TODO: according to the spec we should delay this until the container initiated thread has returned?
 
             onAsyncComplete();
@@ -307,6 +309,8 @@ public class AsyncContextImpl implements AsyncContext {
                     servletRequestContext.getOriginalRequest().clearAttributes();
                 } catch (IOException e) {
                     UndertowLogger.REQUEST_IO_LOGGER.ioException(e);
+                } catch (Throwable t) {
+                    UndertowLogger.REQUEST_IO_LOGGER.handleUnexpectedFailure(t);
                 }
             } else {
                 doDispatch(new Runnable() {
@@ -320,6 +324,8 @@ public class AsyncContextImpl implements AsyncContext {
                             servletRequestContext.getOriginalRequest().closeAndDrainRequest();
                         } catch (IOException e) {
                             UndertowLogger.REQUEST_IO_LOGGER.ioException(e);
+                        } catch (Throwable t) {
+                            UndertowLogger.REQUEST_IO_LOGGER.handleUnexpectedFailure(t);
                         }
                     }
                 });
@@ -423,6 +429,8 @@ public class AsyncContextImpl implements AsyncContext {
                     }
                 } catch (IOException e) {
                     UndertowLogger.REQUEST_IO_LOGGER.ioException(e);
+                } catch (Throwable t) {
+                    UndertowLogger.REQUEST_IO_LOGGER.handleUnexpectedFailure(t);
                 }
             } else if (error instanceof IOException) {
                 UndertowLogger.REQUEST_IO_LOGGER.ioException((IOException) error);
@@ -516,6 +524,8 @@ public class AsyncContextImpl implements AsyncContext {
                                                             }
                                                         } catch (IOException e) {
                                                             UndertowLogger.REQUEST_IO_LOGGER.ioException(e);
+                                                        } catch (Throwable t) {
+                                                            UndertowLogger.REQUEST_IO_LOGGER.handleUnexpectedFailure(t);
                                                         }
                                                     }
                                                 }, exchange);
@@ -604,6 +614,8 @@ public class AsyncContextImpl implements AsyncContext {
                             listener.asyncListener.onComplete(event);
                         } catch (IOException e) {
                             UndertowServletLogger.REQUEST_LOGGER.ioExceptionDispatchingAsyncEvent(e);
+                        } catch (Throwable t) {
+                            UndertowServletLogger.REQUEST_LOGGER.failureDispatchingAsyncEvent(t);
                         }
                     }
                 } finally {
@@ -620,6 +632,8 @@ public class AsyncContextImpl implements AsyncContext {
                 listener.asyncListener.onTimeout(event);
             } catch (IOException e) {
                 UndertowServletLogger.REQUEST_LOGGER.ioExceptionDispatchingAsyncEvent(e);
+            } catch (Throwable t) {
+                UndertowServletLogger.REQUEST_LOGGER.failureDispatchingAsyncEvent(t);
             }
         }
     }
@@ -641,6 +655,8 @@ public class AsyncContextImpl implements AsyncContext {
                             listener.asyncListener.onStartAsync(event);
                         } catch (IOException e) {
                             UndertowServletLogger.REQUEST_LOGGER.ioExceptionDispatchingAsyncEvent(e);
+                        } catch (Throwable t) {
+                            UndertowServletLogger.REQUEST_LOGGER.failureDispatchingAsyncEvent(t);
                         }
                     }
                 } finally {
@@ -664,6 +680,8 @@ public class AsyncContextImpl implements AsyncContext {
                             listener.asyncListener.onError(event);
                         } catch (IOException e) {
                             UndertowServletLogger.REQUEST_LOGGER.ioExceptionDispatchingAsyncEvent(e);
+                        } catch (Throwable t) {
+                            UndertowServletLogger.REQUEST_LOGGER.failureDispatchingAsyncEvent(t);
                         }
                     }
                 } finally {

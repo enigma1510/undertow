@@ -530,7 +530,7 @@ final class HttpRequestConduit extends AbstractStreamSinkConduit<StreamSinkCondu
                 return next.write(src) + alreadyWritten;
             }
             return alreadyWritten;
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException | Error e) {
             this.state |= FLAG_SHUTDOWN;
             if(pooledBuffer != null) {
                 pooledBuffer.close();
@@ -566,7 +566,7 @@ final class HttpRequestConduit extends AbstractStreamSinkConduit<StreamSinkCondu
                 }
             }
             return length == 1 ? next.write(srcs[offset]) : next.write(srcs, offset, length);
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException | Error e) {
             this.state |= FLAG_SHUTDOWN;
             if(pooledBuffer != null) {
                 pooledBuffer.close();
@@ -607,7 +607,7 @@ final class HttpRequestConduit extends AbstractStreamSinkConduit<StreamSinkCondu
                 }
             }
             return next.transferFrom(src, position, count);
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException | Error e) {
             this.state |= FLAG_SHUTDOWN;
             if(pooledBuffer != null) {
                 pooledBuffer.close();
@@ -639,7 +639,7 @@ final class HttpRequestConduit extends AbstractStreamSinkConduit<StreamSinkCondu
                 }
             }
             return next.transferFrom(source, count, throughBuffer);
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException | Error e) {
             this.state |= FLAG_SHUTDOWN;
             if(pooledBuffer != null) {
                 pooledBuffer.close();
@@ -652,6 +652,7 @@ final class HttpRequestConduit extends AbstractStreamSinkConduit<StreamSinkCondu
     }
 
     public boolean flush() throws IOException {
+
         log.trace("flush");
         int oldVal = state;
         int state = oldVal & MASK_STATE;
@@ -669,7 +670,7 @@ final class HttpRequestConduit extends AbstractStreamSinkConduit<StreamSinkCondu
             }
             log.trace("Delegating flush");
             return next.flush();
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException | Error e) {
             this.state |= FLAG_SHUTDOWN;
             if(pooledBuffer != null) {
                 pooledBuffer.close();
@@ -718,6 +719,7 @@ final class HttpRequestConduit extends AbstractStreamSinkConduit<StreamSinkCondu
         if(pooledBuffer != null) {
             pooledBuffer.close();
             pooledBuffer = null;
+            this.state = state & ~MASK_STATE | FLAG_SHUTDOWN;
         }
     }
 }

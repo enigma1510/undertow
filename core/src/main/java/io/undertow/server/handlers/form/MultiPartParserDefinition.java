@@ -237,7 +237,7 @@ public class MultiPartParserDefinition implements FormParserFactory.ParserDefini
             if (disposition != null) {
                 if (disposition.startsWith("form-data")) {
                     currentName = Headers.extractQuotedValueFromHeader(disposition, "name");
-                    fileName = Headers.extractQuotedValueFromHeader(disposition, "filename");
+                    fileName = Headers.extractQuotedValueFromHeaderWithEncoding(disposition, "filename");
                     if (fileName != null) {
                         try {
                             if (tempFileLocation != null) {
@@ -402,5 +402,23 @@ public class MultiPartParserDefinition implements FormParserFactory.ParserDefini
      }
 
 
+     public static class FileTooLargeException extends IOException {
+
+         public FileTooLargeException() {
+             super();
+         }
+
+         public FileTooLargeException(String message) {
+             super(message);
+         }
+
+         public FileTooLargeException(String message, Throwable cause) {
+             super(message, cause);
+         }
+
+         public FileTooLargeException(Throwable cause) {
+             super(cause);
+         }
+     }
 
 }

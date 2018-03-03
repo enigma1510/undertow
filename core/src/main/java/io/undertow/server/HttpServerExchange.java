@@ -45,6 +45,7 @@ import io.undertow.util.HttpString;
 import io.undertow.util.Methods;
 import io.undertow.util.NetworkUtils;
 import io.undertow.util.Protocols;
+import io.undertow.util.Rfc6265CookieSupport;
 import io.undertow.util.StatusCodes;
 import org.jboss.logging.Logger;
 import org.xnio.Buffers;
@@ -96,6 +97,7 @@ public final class HttpServerExchange extends AbstractAttachable {
 
     private static final RuntimePermission SET_SECURITY_CONTEXT = new RuntimePermission("io.undertow.SET_SECURITY_CONTEXT");
     private static final String ISO_8859_1 = "ISO-8859-1";
+    private static final String HTTPS = "https";
 
     /**
      * The HTTP reason phrase to send. This is an attachment rather than a field as it is rarely used. If this is not set
@@ -112,6 +114,11 @@ public final class HttpServerExchange extends AbstractAttachable {
      * Attachment key that can be used to hold additional request attributes
      */
     public static final AttachmentKey<Map<String, String>> REQUEST_ATTRIBUTES = AttachmentKey.create(Map.class);
+
+    /**
+     * Attachment key that can be used as a flag of secure attribute
+     */
+    public static final AttachmentKey<Boolean> SECURE_REQUEST = AttachmentKey.create(Boolean.class);
 
     private final ServerConnection connection;
     private final HeaderMap requestHeaders;
@@ -374,6 +381,18 @@ public final class HttpServerExchange extends AbstractAttachable {
      */
     public boolean isHttp11() {
         return protocol.equals(Protocols.HTTP_1_1);
+    }
+
+    public boolean isSecure() {
+        Boolean secure = getAttachment(SECURE_REQUEST);
+        if(secure != null && secure) {
+            return true;
+        }
+        String scheme = getRequestScheme();
+        if (scheme != null && scheme.equalsIgnoreCase(HTTPS)) {
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -1120,6 +1139,17 @@ public final class HttpServerExchange extends AbstractAttachable {
      * @param cookie The cookie
      */
     public HttpServerExchange setResponseCookie(final Cookie cookie) {
+        if(getConnection().getUndertowOptions().get(UndertowOptions.ENABLE_RFC6265_COOKIE_VALIDATION, UndertowOptions.DEFAULT_ENABLE_RFC6265_COOKIE_VALIDATION)) {
+            if (cookie.getValue() != null && !cookie.getValue().isEmpty()) {
+                Rfc6265CookieSupport.validateCookieValue(cookie.getValue());
+            }
+            if (cookie.getPath() != null && !cookie.getPath().isEmpty()) {
+                Rfc6265CookieSupport.validatePath(cookie.getPath());
+            }
+            if (cookie.getDomain() != null && !cookie.getDomain().isEmpty()) {
+                Rfc6265CookieSupport.validateDomain(cookie.getDomain());
+            }
+        }
         if (responseCookies == null) {
             responseCookies = new TreeMap<>(); //hashmap is slow to allocate in JDK7
         }
@@ -1520,7 +1550,9 @@ public final class HttpServerExchange extends AbstractAttachable {
             // idempotent
             return this;
         }
-        responseChannel.responseDone();
+        if(responseChannel != null) {
+            responseChannel.responseDone();
+        }
         this.state = oldVal | FLAG_RESPONSE_TERMINATED;
         if (anyAreSet(oldVal, FLAG_REQUEST_TERMINATED)) {
             invokeExchangeCompleteListeners();
@@ -1569,7 +1601,7 @@ public final class HttpServerExchange extends AbstractAttachable {
                         if (listener.handleDefaultResponse(this)) {
                             return this;
                         }
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         UndertowLogger.REQUEST_LOGGER.debug("Exception running default response listener", e);
                     }
                 }
@@ -1587,6 +1619,9 @@ public final class HttpServerExchange extends AbstractAttachable {
                 blockingHttpExchange.close();
             } catch (IOException e) {
                 UndertowLogger.REQUEST_IO_LOGGER.ioException(e);
+                IoUtils.safeClose(connection);
+            } catch (Throwable t) {
+                UndertowLogger.REQUEST_IO_LOGGER.handleUnexpectedFailure(t);
                 IoUtils.safeClose(connection);
             }
         }
@@ -1640,8 +1675,12 @@ public final class HttpServerExchange extends AbstractAttachable {
                     } else if (read == -1) {
                         break;
                     }
-                } catch (IOException e) {
-                    UndertowLogger.REQUEST_IO_LOGGER.ioException(e);
+                } catch (Throwable t) {
+                    if (t instanceof IOException) {
+                        UndertowLogger.REQUEST_IO_LOGGER.ioException((IOException) t);
+                    } else {
+                        UndertowLogger.REQUEST_IO_LOGGER.handleUnexpectedFailure(t);
+                    }
                     invokeExchangeCompleteListeners();
                     IoUtils.safeClose(connection);
                     return this;
@@ -1703,8 +1742,12 @@ public final class HttpServerExchange extends AbstractAttachable {
                     IoUtils.safeClose(connection);
                 }
             }
-        } catch (IOException e) {
-            UndertowLogger.REQUEST_IO_LOGGER.ioException(e);
+        } catch (Throwable t) {
+            if (t instanceof IOException) {
+                UndertowLogger.REQUEST_IO_LOGGER.ioException((IOException) t);
+            } else {
+                UndertowLogger.REQUEST_IO_LOGGER.handleUnexpectedFailure(t);
+            }
             invokeExchangeCompleteListeners();
 
             IoUtils.safeClose(connection);
@@ -1840,7 +1883,7 @@ public final class HttpServerExchange extends AbstractAttachable {
     private static class DefaultBlockingHttpExchange implements BlockingHttpExchange {
 
         private InputStream inputStream;
-        private OutputStream outputStream;
+        private UndertowOutputStream outputStream;
         private Sender sender;
         private final HttpServerExchange exchange;
 
@@ -1855,7 +1898,7 @@ public final class HttpServerExchange extends AbstractAttachable {
             return inputStream;
         }
 
-        public OutputStream getOutputStream() {
+        public UndertowOutputStream getOutputStream() {
             if (outputStream == null) {
                 outputStream = new UndertowOutputStream(exchange);
             }

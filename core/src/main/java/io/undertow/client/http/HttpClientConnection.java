@@ -79,11 +79,6 @@ import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static io.undertow.client.UndertowClientMessages.MESSAGES;
-import static io.undertow.util.Headers.CLOSE;
-import static io.undertow.util.Headers.CONNECTION;
-import static io.undertow.util.Headers.CONTENT_LENGTH;
-import static io.undertow.util.Headers.TRANSFER_ENCODING;
-import static io.undertow.util.Headers.UPGRADE;
 import static org.xnio.Bits.allAreClear;
 import static org.xnio.Bits.allAreSet;
 import static org.xnio.Bits.anyAreSet;
@@ -126,7 +121,6 @@ class HttpClientConnection extends AbstractAttachable implements Closeable, Clie
     private static final int UPGRADE_REQUESTED = 1 << 29;
     private static final int CLOSE_REQ = 1 << 30;
     private static final int CLOSED = 1 << 31;
-    private int count = 0;
 
     private int state;
     private final ChannelListener.SimpleSetter<HttpClientConnection> closeSetter = new ChannelListener.SimpleSetter<>();
@@ -193,6 +187,7 @@ class HttpClientConnection extends AbstractAttachable implements Closeable, Clie
                 if(currentRequest != null) {
                     currentRequest.setFailed(new ClosedChannelException());
                     currentRequest = null;
+                    pendingResponse = null;
                 }
             }
         });
@@ -330,7 +325,6 @@ class HttpClientConnection extends AbstractAttachable implements Closeable, Clie
             http2Delegate.sendRequest(request, clientCallback);
             return;
         }
-        count++;
         if (anyAreSet(state, UPGRADE_REQUESTED | UPGRADED | CLOSE_REQ | CLOSED)) {
             clientCallback.failed(UndertowClientMessages.MESSAGES.invalidConnectionState());
             return;
@@ -358,18 +352,17 @@ class HttpClientConnection extends AbstractAttachable implements Closeable, Clie
         pendingResponse = new HttpResponseBuilder();
         ClientRequest request = httpClientExchange.getRequest();
 
-        String connectionString = request.getRequestHeaders().getFirst(CONNECTION);
+        String connectionString = request.getRequestHeaders().getFirst(Headers.CONNECTION);
         if (connectionString != null) {
-            HttpString connectionHttpString = new HttpString(connectionString);
-            if (connectionHttpString.equals(CLOSE)) {
+            if (Headers.CLOSE.equalToString(connectionString)) {
                 state |= CLOSE_REQ;
-            } else if(connectionHttpString.equals(UPGRADE)) {
+            } else if (Headers.UPGRADE.equalToString(connectionString)) {
                 state |= UPGRADE_REQUESTED;
             }
         } else if (request.getProtocol() != Protocols.HTTP_1_1) {
             state |= CLOSE_REQ;
         }
-        if (request.getRequestHeaders().contains(UPGRADE)) {
+        if (request.getRequestHeaders().contains(Headers.UPGRADE)) {
             state |= UPGRADE_REQUESTED;
         }
         if(request.getMethod().equals(Methods.CONNECT)) {
@@ -388,8 +381,8 @@ class HttpClientConnection extends AbstractAttachable implements Closeable, Clie
         httpClientExchange.setRequestConduit(httpRequestConduit);
         conduit = httpRequestConduit;
 
-        String fixedLengthString = request.getRequestHeaders().getFirst(CONTENT_LENGTH);
-        String transferEncodingString = request.getRequestHeaders().getLast(TRANSFER_ENCODING);
+        String fixedLengthString = request.getRequestHeaders().getFirst(Headers.CONTENT_LENGTH);
+        String transferEncodingString = request.getRequestHeaders().getLast(Headers.TRANSFER_ENCODING);
 
         boolean hasContent = true;
 
@@ -399,7 +392,7 @@ class HttpClientConnection extends AbstractAttachable implements Closeable, Clie
                 conduit = new ClientFixedLengthStreamSinkConduit(conduit, length, false, false, currentRequest);
                 hasContent = length != 0;
             } catch (NumberFormatException e) {
-                handleError(new IOException(e));
+                handleError(e);
                 return;
             }
         } else if (transferEncodingString != null) {
@@ -429,12 +422,19 @@ class HttpClientConnection extends AbstractAttachable implements Closeable, Clie
                     }));
                     sinkChannel.resumeWrites();
                 }
-            } catch (IOException e) {
-                handleError(e);
+            } catch (Throwable t) {
+                handleError(t);
             }
         }
     }
 
+    private void handleError(Throwable exception) {
+        if (exception instanceof IOException) {
+            handleError((IOException) exception);
+        } else {
+            handleError(new IOException(exception));
+        }
+    }
     private void handleError(IOException exception) {
         UndertowLogger.REQUEST_IO_LOGGER.ioException(exception);
         safeClose(connection);
@@ -479,14 +479,17 @@ class HttpClientConnection extends AbstractAttachable implements Closeable, Clie
 
         if (anyAreSet(state, CLOSE_REQ)) {
             currentRequest = null;
+            pendingResponse = null;
             this.state |= CLOSED;
             safeClose(connection);
         } else if (anyAreSet(state, UPGRADE_REQUESTED)) {
             connection.getSourceChannel().suspendReads();
             currentRequest = null;
+            pendingResponse = null;
             return;
         }
         currentRequest = null;
+        pendingResponse = null;
 
         HttpClientExchange next = pendingQueue.poll();
         if (next == null) {
@@ -549,6 +552,7 @@ class HttpClientConnection extends AbstractAttachable implements Closeable, Clie
                         try {
                             currentRequest.setFailed(e);
                             currentRequest = null;
+                            pendingResponse = null;
                         } finally {
                             safeClose(channel, HttpClientConnection.this);
                         }
@@ -567,6 +571,7 @@ class HttpClientConnection extends AbstractAttachable implements Closeable, Clie
                             // Cancel the current active request
                             currentRequest.setFailed(new IOException(MESSAGES.connectionClosed()));
                             currentRequest = null;
+                            pendingResponse = null;
                         } finally {
                             safeClose(HttpClientConnection.this);
                         }
@@ -585,11 +590,11 @@ class HttpClientConnection extends AbstractAttachable implements Closeable, Clie
 
                 final ClientResponse response = builder.build();
 
-                String connectionString = response.getResponseHeaders().getFirst(CONNECTION);
+                String connectionString = response.getResponseHeaders().getFirst(Headers.CONNECTION);
 
                 //check if an upgrade worked
                 if (anyAreSet(HttpClientConnection.this.state, UPGRADE_REQUESTED)) {
-                    if ((connectionString == null || !UPGRADE.equalToString(connectionString)) && !response.getResponseHeaders().contains(UPGRADE)) {
+                    if ((connectionString == null || !Headers.UPGRADE.equalToString(connectionString)) && !response.getResponseHeaders().contains(Headers.UPGRADE)) {
                         if(!currentRequest.getRequest().getMethod().equals(Methods.CONNECT) || response.getResponseCode() != 200) { //make sure it was not actually a connect request
                             //just unset the upgrade requested flag
                             HttpClientConnection.this.state &= ~UPGRADE_REQUESTED;
@@ -598,11 +603,10 @@ class HttpClientConnection extends AbstractAttachable implements Closeable, Clie
                 }
                 boolean close = false;
                 if(connectionString != null) {
-                    HttpString con = new HttpString(connectionString);
-                    if (Headers.CLOSE.equals(con)) {
+                    if (Headers.CLOSE.equalToString(connectionString)) {
                         close = true;
                     } else if(!response.getProtocol().equals(Protocols.HTTP_1_1)) {
-                        if(!Headers.KEEP_ALIVE.equals(con)) {
+                        if(!Headers.KEEP_ALIVE.equalToString(connectionString)) {
                             close = true;
                         }
                     }
@@ -649,10 +653,12 @@ class HttpClientConnection extends AbstractAttachable implements Closeable, Clie
                 }
 
 
-            } catch (Exception e) {
-                UndertowLogger.CLIENT_LOGGER.exceptionProcessingRequest(e);
+            } catch (Throwable t) {
+                UndertowLogger.CLIENT_LOGGER.exceptionProcessingRequest(t);
                 safeClose(connection);
-                currentRequest.setFailed(new IOException(e));
+                if(currentRequest != null) {
+                    currentRequest.setFailed(new IOException(t));
+                }
             } finally {
                 if (free) {
                     pooled.close();
@@ -680,6 +686,7 @@ class HttpClientConnection extends AbstractAttachable implements Closeable, Clie
             http2Delegate = http2ClientConnection;
             connectedStreamChannel.getSourceChannel().wakeupReads(); //make sure the read listener is immediately invoked, as it may not happen if data is pushed back
             currentRequest = null;
+            pendingResponse = null;
         } catch (IOException e) {
             UndertowLogger.REQUEST_IO_LOGGER.ioException(e);
             safeClose(this);
@@ -687,9 +694,9 @@ class HttpClientConnection extends AbstractAttachable implements Closeable, Clie
     }
 
     private void prepareResponseChannel(ClientResponse response, ClientExchange exchange) {
-        String encoding = response.getResponseHeaders().getLast(TRANSFER_ENCODING);
+        String encoding = response.getResponseHeaders().getLast(Headers.TRANSFER_ENCODING);
         boolean chunked = encoding != null && Headers.CHUNKED.equals(new HttpString(encoding));
-        String length = response.getResponseHeaders().getFirst(CONTENT_LENGTH);
+        String length = response.getResponseHeaders().getFirst(Headers.CONTENT_LENGTH);
         if (exchange.getRequest().getMethod().equals(Methods.HEAD)) {
             connection.getSourceChannel().setConduit(new FixedLengthStreamSourceConduit(connection.getSourceChannel().getConduit(), 0, responseFinishedListener));
         } else if (chunked) {
@@ -699,7 +706,7 @@ class HttpClientConnection extends AbstractAttachable implements Closeable, Clie
                 long contentLength = Long.parseLong(length);
                 connection.getSourceChannel().setConduit(new FixedLengthStreamSourceConduit(connection.getSourceChannel().getConduit(), contentLength, responseFinishedListener));
             } catch (NumberFormatException e) {
-                handleError(new IOException(e));
+                handleError(e);
                 throw e;
             }
         } else if (response.getProtocol().equals(Protocols.HTTP_1_1) && !Connectors.isEntityBodyAllowed(response.getResponseCode())) {

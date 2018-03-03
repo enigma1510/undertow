@@ -30,6 +30,8 @@ import io.undertow.testutils.DefaultServer;
 import io.undertow.testutils.HttpClientUtils;
 import io.undertow.testutils.ProxyIgnore;
 import io.undertow.testutils.TestHttpClient;
+import io.undertow.util.ParameterLimitException;
+import io.undertow.util.URLUtils;
 import org.apache.http.client.methods.HttpGet;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -117,6 +119,24 @@ public class QueryParametersTestCase {
         } finally {
             DefaultServer.setUndertowOptions(old);
         }
+    }
+
+    @Test
+    @ProxyIgnore
+    public void testQueryParameterParsingIncorrectlyEncodedURI() throws IOException, ParameterLimitException {
+        StringBuilder out = new StringBuilder();
+        out.append((char)0xc7);
+        out.append((char)0xd1);
+        out.append((char)0x25);
+        out.append((char)0x32);
+        out.append((char)0x30);
+        out.append((char)0xb1);
+        out.append((char)0xdb);
+        String s = "p=" + out.toString();
+        HttpServerExchange exchange = new HttpServerExchange(null);
+        URLUtils.parseQueryString(s, exchange, "MS949", true, 1000);
+        Assert.assertEquals("한 글", exchange.getQueryParameters().get("p").getFirst());
+
     }
 
     private void runTest(final TestHttpClient client, final String expected, final String queryString) throws IOException {

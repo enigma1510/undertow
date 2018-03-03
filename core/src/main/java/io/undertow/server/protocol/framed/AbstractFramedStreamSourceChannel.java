@@ -313,7 +313,6 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
         if(data == null && pendingFrameData.isEmpty() && frameDataRemaining == 0) {
             state |= STATE_DONE | STATE_CLOSED;
             getFramedChannel().notifyFrameReadComplete(this);
-            getFramedChannel().notifyClosed(this);
             IoUtils.safeClose(this);
         }
     }
@@ -529,7 +528,7 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
         } finally {
             try {
                 exitRead();
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 markStreamBroken();
             }
         }
@@ -558,7 +557,7 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
                         this.currentDataOriginalSize = frameData.getBuffer().remaining();
                         try {
                             this.data = processFrameData(frameData, frameDataRemaining - currentDataOriginalSize == 0);
-                        } catch (Exception e) {
+                        } catch (Throwable e) {
                             frameData.close();
                             UndertowLogger.REQUEST_IO_LOGGER.ioException(new IOException(e));
                             markStreamBroken();
@@ -581,7 +580,6 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
                     if (pendingFrameData.isEmpty()) {
                         if (anyAreSet(state, STATE_RETURNED_MINUS_ONE)) {
                             state |= STATE_DONE;
-                            getFramedChannel().notifyClosed(this);
                             complete();
                             close();
                         } else if(anyAreSet(state, STATE_LAST_FRAME)) {
@@ -613,7 +611,6 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
             state |= STATE_CLOSED;
             if (allAreClear(state, STATE_DONE | STATE_LAST_FRAME)) {
                 state |= STATE_STREAM_BROKEN;
-                getFramedChannel().notifyClosed(this);
                 channelForciblyClosed();
             }
             if (data != null) {
@@ -660,7 +657,7 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
             if(data != null) {
                 try {
                     data.close(); //may have been closed by the read thread
-                } catch (Exception e) {
+                } catch (Throwable e) {
                     //ignore
                 }
                 this.data = null;
@@ -669,7 +666,6 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
                 frame.frameData.close();
             }
             pendingFrameData.clear();
-            getFramedChannel().notifyClosed(this);
             if(isReadResumed()) {
                 resumeReadsInternal(true);
             }

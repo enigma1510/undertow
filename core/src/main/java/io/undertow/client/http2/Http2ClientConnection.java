@@ -35,11 +35,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import io.undertow.client.ClientStatistics;
+import io.undertow.protocols.http2.Http2DataStreamSinkChannel;
 import io.undertow.protocols.http2.Http2GoAwayStreamSourceChannel;
 import io.undertow.protocols.http2.Http2PushPromiseStreamSourceChannel;
+import io.undertow.server.protocol.http.HttpAttachments;
+import io.undertow.util.HeaderMap;
 import io.undertow.util.HeaderValues;
 import io.undertow.util.Methods;
-import io.undertow.util.NetworkUtils;
 import io.undertow.util.Protocols;
 import org.xnio.ChannelExceptionHandler;
 import org.xnio.ChannelListener;
@@ -59,7 +61,6 @@ import io.undertow.client.ClientCallback;
 import io.undertow.client.ClientConnection;
 import io.undertow.client.ClientExchange;
 import io.undertow.client.ClientRequest;
-import io.undertow.client.ProxiedRequestAttachments;
 import io.undertow.protocols.http2.AbstractHttp2StreamSourceChannel;
 import io.undertow.protocols.http2.Http2Channel;
 import io.undertow.protocols.http2.Http2HeadersStreamSinkChannel;
@@ -167,39 +168,23 @@ public class Http2ClientConnection implements ClientConnection {
         request.getRequestHeaders().remove(Headers.KEEP_ALIVE);
         request.getRequestHeaders().remove(Headers.TRANSFER_ENCODING);
 
-        //setup the X-Forwarded-* headers
-        String peer = request.getAttachment(ProxiedRequestAttachments.REMOTE_HOST);
-        if(peer != null) {
-            request.getRequestHeaders().put(Headers.X_FORWARDED_FOR, peer);
-        }
-        Boolean proto = request.getAttachment(ProxiedRequestAttachments.IS_SSL);
-        if(proto != null) {
-            if (proto) {
-                request.getRequestHeaders().put(Headers.X_FORWARDED_PROTO, "https");
-            } else {
-                request.getRequestHeaders().put(Headers.X_FORWARDED_PROTO, "http");
-            }
-        }
-        String hn = request.getAttachment(ProxiedRequestAttachments.SERVER_NAME);
-        if(hn != null) {
-            request.getRequestHeaders().put(Headers.X_FORWARDED_HOST, NetworkUtils.formatPossibleIpv6Address(hn));
-        }
-        Integer port = request.getAttachment(ProxiedRequestAttachments.SERVER_PORT);
-        if(port != null) {
-            request.getRequestHeaders().put(Headers.X_FORWARDED_PORT, port);
-        }
-
-
         Http2HeadersStreamSinkChannel sinkChannel;
         try {
             sinkChannel = http2Channel.createStream(request.getRequestHeaders());
-        } catch (IOException e) {
+        } catch (Throwable t) {
+            IOException e = t instanceof IOException ? (IOException) t : new IOException(t);
             clientCallback.failed(e);
             return;
         }
-        Http2ClientExchange exchange = new Http2ClientExchange(this, sinkChannel, request);
+        final Http2ClientExchange exchange = new Http2ClientExchange(this, sinkChannel, request);
         currentExchanges.put(sinkChannel.getStreamId(), exchange);
 
+        sinkChannel.setTrailersProducer(new Http2DataStreamSinkChannel.TrailersProducer() {
+            @Override
+            public HeaderMap getTrailers() {
+                return exchange.getAttachment(HttpAttachments.RESPONSE_TRAILERS);
+            }
+        });
 
         if(clientCallback != null) {
             clientCallback.completed(exchange);
@@ -218,14 +203,14 @@ public class Http2ClientConnection implements ClientConnection {
                     }));
                     sinkChannel.resumeWrites();
                 }
-            } catch (IOException e) {
+            } catch (Throwable e) {
                 handleError(e);
             }
         }
     }
 
-    private void handleError(IOException e) {
-
+    private void handleError(Throwable t) {
+        IOException e = t instanceof IOException ? (IOException) t : new IOException(t);
         UndertowLogger.REQUEST_IO_LOGGER.ioException(e);
         IoUtils.safeClose(Http2ClientConnection.this);
         for (Map.Entry<Integer, Http2ClientExchange> entry : currentExchanges.entrySet()) {
@@ -354,7 +339,7 @@ public class Http2ClientConnection implements ClientConnection {
                     final Http2StreamSourceChannel streamSourceChannel = (Http2StreamSourceChannel) result;
 
                     int statusCode = Integer.parseInt(streamSourceChannel.getHeaders().getFirst(STATUS));
-                    Http2ClientExchange request = currentExchanges.get(streamSourceChannel.getStreamId());
+                    final Http2ClientExchange request = currentExchanges.get(streamSourceChannel.getStreamId());
                     if(statusCode < 200) {
                         //this is an informational response 1xx response
                         if(statusCode == 100) {
@@ -364,6 +349,12 @@ public class Http2ClientConnection implements ClientConnection {
                         Channels.drain(result, Long.MAX_VALUE);
                         return;
                     }
+                    ((Http2StreamSourceChannel) result).setTrailersHandler(new Http2StreamSourceChannel.TrailersHandler() {
+                        @Override
+                        public void handleTrailers(HeaderMap headerMap) {
+                            request.putAttachment(HttpAttachments.REQUEST_TRAILERS, headerMap);
+                        }
+                    });
 
                     result.addCloseTask(new ChannelListener<AbstractHttp2StreamSourceChannel>() {
                         @Override
@@ -433,13 +424,14 @@ public class Http2ClientConnection implements ClientConnection {
                     Channels.drain(result, Long.MAX_VALUE);
                 }
 
-            } catch (IOException e) {
+            } catch (Throwable t) {
+                IOException e = t instanceof IOException ? (IOException) t : new IOException(t);
                 UndertowLogger.REQUEST_IO_LOGGER.ioException(e);
                 IoUtils.safeClose(Http2ClientConnection.this);
                 for (Map.Entry<Integer, Http2ClientExchange> entry : currentExchanges.entrySet()) {
                     try {
                         entry.getValue().failed(e);
-                    } catch (Exception ex) {
+                    } catch (Throwable ex) {
                         UndertowLogger.REQUEST_IO_LOGGER.ioException(new IOException(ex));
                     }
                 }

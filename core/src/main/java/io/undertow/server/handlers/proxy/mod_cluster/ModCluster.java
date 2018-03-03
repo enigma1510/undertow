@@ -142,7 +142,7 @@ public class ModCluster {
      * @return the proxy handler
      */
     public HttpHandler createProxyHandler() {
-        return new ProxyHandler(container.getProxyClient(), maxRequestTime, NEXT_HANDLER, false, false, maxRetries);
+        return ProxyHandler.builder().setProxyClient(container.getProxyClient()).setMaxRequestTime(maxRequestTime).setMaxConnectionRetries(maxRetries).build();
     }
 
     /**
@@ -151,7 +151,7 @@ public class ModCluster {
      * @return the proxy handler
      */
     public HttpHandler createProxyHandler(HttpHandler next) {
-        return new ProxyHandler(container.getProxyClient(), maxRequestTime, next, false, false, maxRetries);
+        return ProxyHandler.builder().setProxyClient(container.getProxyClient()).setNext(next).setMaxRequestTime(maxRequestTime).setMaxConnectionRetries(maxRetries).build();
     }
     /**
      * Start
@@ -201,12 +201,12 @@ public class ModCluster {
 
         // Fairly restrictive connection pool defaults
         private int maxConnections = 16;
-        private int cacheConnections = 8;
+        private int cacheConnections = 1;
         private int requestQueueSize = 0;
         private boolean queueNewRequests = false;
 
         private int maxRequestTime = -1;
-        private long ttl;
+        private long ttl = TimeUnit.SECONDS.toMillis(60);
         private boolean useAlias = false;
 
         private NodeHealthChecker healthChecker = NodeHealthChecker.NO_CHECK;

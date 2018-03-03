@@ -19,11 +19,12 @@
 package io.undertow;
 
 import java.io.IOException;
-import java.net.SocketAddress;
 import java.nio.channels.ClosedChannelException;
 import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.SSLPeerUnverifiedException;
 
+import io.undertow.server.RequestTooBigException;
+import io.undertow.server.handlers.form.MultiPartParserDefinition;
 import org.jboss.logging.Messages;
 import org.jboss.logging.annotations.Cause;
 import org.jboss.logging.annotations.Message;
@@ -80,23 +81,23 @@ public interface UndertowMessages {
     @Message(id = 13, value = "Argument %s cannot be null")
     IllegalArgumentException argumentCannotBeNull(final String argument);
 
-    @Message(id = 14, value = "close() called with data still to be flushed. Please call shutdownWrites() and then call flush() until it returns true before calling close()")
-    IOException closeCalledWithDataStillToBeFlushed();
-
-    @Message(id = 16, value = "Could not add cookie as cookie handler was not present in the handler chain")
-    IllegalStateException cookieHandlerNotPresent();
+//    @Message(id = 14, value = "close() called with data still to be flushed. Please call shutdownWrites() and then call flush() until it returns true before calling close()")
+//    IOException closeCalledWithDataStillToBeFlushed();
+//
+//    @Message(id = 16, value = "Could not add cookie as cookie handler was not present in the handler chain")
+//    IllegalStateException cookieHandlerNotPresent();
 
     @Message(id = 17, value = "Form value is a file, use getFile() instead")
     IllegalStateException formValueIsAFile();
 
     @Message(id = 18, value = "Form value is a String, use getValue() instead")
     IllegalStateException formValueIsAString();
-
-    @Message(id = 19, value = "Connection from %s terminated as request entity was larger than %s")
-    IOException requestEntityWasTooLarge(SocketAddress address, long size);
+//
+//    @Message(id = 19, value = "Connection from %s terminated as request entity was larger than %s")
+//    IOException requestEntityWasTooLarge(SocketAddress address, long size);
 
     @Message(id = 20, value = "Connection terminated as request was larger than %s")
-    IOException requestEntityWasTooLarge(long size);
+    RequestTooBigException requestEntityWasTooLarge(long size);
 
     @Message(id = 21, value = "Session already invalidated")
     IllegalStateException sessionAlreadyInvalidated();
@@ -118,9 +119,9 @@ public interface UndertowMessages {
 
     @Message(id = 27, value = "Could not find session cookie config in the request")
     IllegalStateException couldNotFindSessionCookieConfig();
-
-    @Message(id = 28, value = "Session %s already exists")
-    IllegalStateException sessionAlreadyExists(final String id);
+//
+//    @Message(id = 28, value = "Session %s already exists")
+//    IllegalStateException sessionAlreadyExists(final String id);
 
     @Message(id = 29, value = "Channel was closed mid chunk, if you have attempted to write chunked data you cannot shutdown the channel until after it has all been written.")
     IOException chunkedChannelClosedMidChunk();
@@ -130,9 +131,9 @@ public interface UndertowMessages {
 
     @Message(id = 31, value = "User %s has logged out.")
     String userLoggedOut(final String userName);
-
-    @Message(id = 33, value = "Authentication type %s cannot be combined with %s")
-    IllegalStateException authTypeCannotBeCombined(String type, String existing);
+//
+//    @Message(id = 33, value = "Authentication type %s cannot be combined with %s")
+//    IllegalStateException authTypeCannotBeCombined(String type, String existing);
 
     @Message(id = 34, value = "Stream is closed")
     IOException streamIsClosed();
@@ -149,10 +150,10 @@ public interface UndertowMessages {
     @Message(id = 38, value = "Authentication failed, requested user name '%s'")
     String authenticationFailed(final String userName);
 
-    @Message(id = 39, value = "To many query parameters, cannot have more than %s query parameters")
+    @Message(id = 39, value = "Too many query parameters, cannot have more than %s query parameters")
     BadRequestException tooManyQueryParameters(int noParams);
 
-    @Message(id = 40, value = "To many headers, cannot have more than %s header")
+    @Message(id = 40, value = "Too many headers, cannot have more than %s header")
     String tooManyHeaders(int noParams);
 
     @Message(id = 41, value = "Channel is closed")
@@ -192,7 +193,7 @@ public interface UndertowMessages {
     IllegalArgumentException listenerAlreadyRegistered(String name);
 
     @Message(id = 54, value = "The maximum size %s for an individual file in a multipart request was exceeded")
-    IOException maxFileSizeExceeded(long maxIndividualFileSize);
+    MultiPartParserDefinition.FileTooLargeException maxFileSizeExceeded(long maxIndividualFileSize);
 
     @Message(id = 55, value = "Could not set attribute %s to %s as it is read only")
     String couldNotSetAttribute(String attributeName, String newValue);
@@ -205,24 +206,24 @@ public interface UndertowMessages {
 
     @Message(id = 58, value = "More than one handler with name %s. Builder class %s and %s")
     IllegalStateException moreThanOneHandlerWithName(String name, Class<? extends HandlerBuilder> aClass, Class<? extends HandlerBuilder> existing);
-
-    @Message(id = 59, value = "Invalid syntax %s")
-    IllegalArgumentException invalidSyntax(String line);
-
-    @Message(id = 60, value = "Error parsing handler string %s:%n%s")
-    IllegalArgumentException errorParsingHandlerString(String reason, String s);
+//
+//    @Message(id = 59, value = "Invalid syntax %s")
+//    IllegalArgumentException invalidSyntax(String line);
+//
+//    @Message(id = 60, value = "Error parsing handler string %s:%n%s")
+//    IllegalArgumentException errorParsingHandlerString(String reason, String s);
 
     @Message(id = 61, value = "Out of band responses only allowed for 100-continue requests")
     IllegalArgumentException outOfBandResponseOnlyAllowedFor100Continue();
-
-    @Message(id = 62, value = "AJP does not support HTTP upgrade")
-    IllegalStateException ajpDoesNotSupportHTTPUpgrade();
-
-    @Message(id = 63, value = "File system watcher already started")
-    IllegalStateException fileSystemWatcherAlreadyStarted();
-
-    @Message(id = 64, value = "File system watcher not started")
-    IllegalStateException fileSystemWatcherNotStarted();
+//
+//    @Message(id = 62, value = "AJP does not support HTTP upgrade")
+//    IllegalStateException ajpDoesNotSupportHTTPUpgrade();
+//
+//    @Message(id = 63, value = "File system watcher already started")
+//    IllegalStateException fileSystemWatcherAlreadyStarted();
+//
+//    @Message(id = 64, value = "File system watcher not started")
+//    IllegalStateException fileSystemWatcherNotStarted();
 
     @Message(id = 65, value = "SSL must be specified to connect to a https URL")
     IOException sslWasNull();
@@ -251,9 +252,9 @@ public interface UndertowMessages {
 
     @Message(id = 73, value = "Resource change listeners are not supported")
     IllegalArgumentException resourceChangeListenerNotSupported();
-
-    @Message(id = 74, value = "Could not renegotiate SSL connection to require client certificate, as client had sent more data")
-    IllegalStateException couldNotRenegotiate();
+//
+//    @Message(id = 74, value = "Could not renegotiate SSL connection to require client certificate, as client had sent more data")
+//    IllegalStateException couldNotRenegotiate();
 
     @Message(id = 75, value = "Object was freed")
     IllegalStateException objectWasFreed();
@@ -266,9 +267,9 @@ public interface UndertowMessages {
 
     @Message(id = 78, value = "Renegotiation not supported")
     IOException renegotiationNotSupported();
-
-    @Message(id = 79, value = "Not a valid user agent pattern %s")
-    IllegalArgumentException notAValidUserAgentPattern(String userAgent);
+//
+//    @Message(id = 79, value = "Not a valid user agent pattern %s")
+//    IllegalArgumentException notAValidUserAgentPattern(String userAgent);
 
     @Message(id = 80, value = "Not a valid regular expression pattern %s")
     IllegalArgumentException notAValidRegularExpressionPattern(String pattern);
@@ -287,27 +288,27 @@ public interface UndertowMessages {
 
     @Message(id = 85, value = "Could not generate unique session id")
     RuntimeException couldNotGenerateUniqueSessionId();
-
-    @Message(id = 86, value = "SPDY needs to be provided with a heap buffer pool, for use in compressing and decompressing headers.")
-    IllegalArgumentException mustProvideHeapBuffer();
-
-    @Message(id = 87, value = "Unexpected SPDY frame type %s")
-    IOException unexpectedFrameType(int type);
+//
+//    @Message(id = 86, value = "SPDY needs to be provided with a heap buffer pool, for use in compressing and decompressing headers.")
+//    IllegalArgumentException mustProvideHeapBuffer();
+//
+//    @Message(id = 87, value = "Unexpected SPDY frame type %s")
+//    IOException unexpectedFrameType(int type);
 
     @Message(id = 88, value = "SPDY control frames cannot have body content")
     IOException controlFrameCannotHaveBodyContent();
 
 //    @Message(id = 89, value = "SPDY not supported")
-//    IOException spdyNotSupported();
-
-    @Message(id = 90, value = "No ALPN implementation available (tried Jetty ALPN and JDK9)")
-    IOException alpnNotAvailable();
+////    IOException spdyNotSupported();
+//
+//    @Message(id = 90, value = "No ALPN implementation available (tried Jetty ALPN and JDK9)")
+//    IOException alpnNotAvailable();
 
     @Message(id = 91, value = "Buffer has already been freed")
     IllegalStateException bufferAlreadyFreed();
-
-    @Message(id = 92, value = "A SPDY header was too large to fit in a response buffer, if you want to support larger headers please increase the buffer size")
-    IllegalStateException headersTooLargeToFitInHeapBuffer();
+//
+//    @Message(id = 92, value = "A SPDY header was too large to fit in a response buffer, if you want to support larger headers please increase the buffer size")
+//    IllegalStateException headersTooLargeToFitInHeapBuffer();
 
 //    @Message(id = 93, value = "A SPDY stream was reset by the remote endpoint")
 //    IOException spdyStreamWasReset();
@@ -335,9 +336,9 @@ public interface UndertowMessages {
 
     @Message(id = 101, value = "stream id must not be zero for frame type %s")
     String streamIdMustNotBeZeroForFrameType(int frameType);
-
-    @Message(id = 102, value = "RST_STREAM received for idle stream")
-    String rstStreamReceivedForIdleStream();
+//
+//    @Message(id = 102, value = "RST_STREAM received for idle stream")
+//    String rstStreamReceivedForIdleStream();
 
     @Message(id = 103, value = "Http2 stream was reset")
     IOException http2StreamWasReset();
@@ -507,9 +508,9 @@ public interface UndertowMessages {
 
     @Message(id = 158, value = "Response of length %s is too large to buffer")
     IllegalStateException responseTooLargeToBuffer(Long length);
-
-    @Message(id = 159, value = "Max size must be larger than one")
-    IllegalArgumentException maxSizeMustBeLargerThanOne();
+//
+//    @Message(id = 159, value = "Max size must be larger than one")
+//    IllegalArgumentException maxSizeMustBeLargerThanOne();
 
     @Message(id = 161, value = "HTTP/2 header block is too large")
     String headerBlockTooLarge();
@@ -528,4 +529,40 @@ public interface UndertowMessages {
 
     @Message(id = 167, value = "More than one host header in request")
     IOException moreThanOneHostHeader();
+
+    @Message(id = 168, value = "An invalid character [ASCII code: %s] was present in the cookie value")
+    IllegalArgumentException invalidCookieValue(String value);
+
+    @Message(id = 169, value = "An invalid domain [%s] was specified for this cookie")
+    IllegalArgumentException invalidCookieDomain(String value);
+
+    @Message(id = 170, value = "An invalid path [%s] was specified for this cookie")
+    IllegalArgumentException invalidCookiePath(String value);
+
+    @Message(id = 173, value = "An invalid control character [%s] was present in the cookie value or attribute")
+    IllegalArgumentException invalidControlCharacter(String value);
+
+    @Message(id = 174, value = "An invalid escape character in cookie value")
+    IllegalArgumentException invalidEscapeCharacter();
+
+    @Message(id = 175, value = "Invalid Hpack index %s")
+    HpackException invalidHpackIndex(int index);
+
+    @Message(id = 178, value = "Buffer pool is too small, min size is %s")
+    IllegalArgumentException bufferPoolTooSmall(int minSize);
+
+    @Message(id = 179, value = "Invalid PROXY protocol header")
+    IOException invalidProxyHeader();
+
+    @Message(id = 180, value = "PROXY protocol header exceeded max size of 107 bytes")
+    IOException headerSizeToLarge();
+
+    @Message(id = 181, value = "HTTP/2 trailers too large for single buffer")
+    RuntimeException http2TrailerToLargeForSingleBuffer();
+
+    @Message(id = 184, value = "Stream limit exceeded")
+    IOException streamLimitExceeded();
+
+    @Message(id = 185, value = "Invalid IP address %s")
+    IOException invalidIpAddress(String addressString);
 }

@@ -21,10 +21,12 @@ package io.undertow.servlet.handlers;
 import io.undertow.io.IoCallback;
 import io.undertow.io.Sender;
 import io.undertow.server.HttpServerExchange;
+import io.undertow.server.handlers.resource.DefaultResourceSupplier;
 import io.undertow.server.handlers.resource.DirectoryUtils;
+import io.undertow.server.handlers.resource.PreCompressedResourceSupplier;
 import io.undertow.server.handlers.resource.RangeAwareResource;
 import io.undertow.server.handlers.resource.Resource;
-import io.undertow.server.handlers.resource.ResourceManager;
+import io.undertow.server.handlers.resource.ResourceSupplier;
 import io.undertow.servlet.api.DefaultServletConfig;
 import io.undertow.servlet.api.Deployment;
 import io.undertow.servlet.spec.ServletContextImpl;
@@ -51,6 +53,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -83,7 +86,7 @@ public class DefaultServlet extends HttpServlet {
 
 
     private Deployment deployment;
-    private ResourceManager resourceManager;
+    private ResourceSupplier resourceSupplier;
     private boolean directoryListingEnabled = false;
 
     private boolean defaultAllowed = true;
@@ -126,7 +129,15 @@ public class DefaultServlet extends HttpServlet {
         if (config.getInitParameter(ALLOW_POST) != null) {
             allowPost = Boolean.parseBoolean(config.getInitParameter(ALLOW_POST));
         }
-        this.resourceManager = deployment.getDeploymentInfo().getResourceManager();
+        if(deployment.getDeploymentInfo().getPreCompressedResources().isEmpty()) {
+            this.resourceSupplier = new DefaultResourceSupplier(deployment.getDeploymentInfo().getResourceManager());
+        } else {
+            PreCompressedResourceSupplier preCompressedResourceSupplier = new PreCompressedResourceSupplier(deployment.getDeploymentInfo().getResourceManager());
+            for(Map.Entry<String, String> entry : deployment.getDeploymentInfo().getPreCompressedResources().entrySet()) {
+                preCompressedResourceSupplier.addEncoding(entry.getKey(), entry.getValue());
+            }
+            this.resourceSupplier = preCompressedResourceSupplier;
+        }
         String listings = config.getInitParameter(DIRECTORY_LISTING);
         if (Boolean.valueOf(listings)) {
             this.directoryListingEnabled = true;
@@ -144,10 +155,12 @@ public class DefaultServlet extends HttpServlet {
             //if the separator char is not / we want to replace it with a / and canonicalise
             path = CanonicalPathUtils.canonicalize(path.replace(File.separatorChar, '/'));
         }
+
+        HttpServerExchange exchange = SecurityActions.requireCurrentServletRequestContext().getOriginalRequest().getExchange();
         final Resource resource;
         //we want to disallow windows characters in the path
         if(File.separatorChar == '/' || !path.contains(File.separator)) {
-            resource = resourceManager.getResource(path);
+            resource = resourceSupplier.getResource(exchange, path);
         } else {
             resource = null;
         }
@@ -182,7 +195,7 @@ public class DefaultServlet extends HttpServlet {
                 resp.sendError(StatusCodes.NOT_FOUND);
                 return;
             }
-            serveFileBlocking(req, resp, resource);
+            serveFileBlocking(req, resp, resource, exchange);
         }
     }
 
@@ -258,7 +271,7 @@ public class DefaultServlet extends HttpServlet {
         }
     }
 
-    private void serveFileBlocking(final HttpServletRequest req, final HttpServletResponse resp, final Resource resource) throws IOException {
+    private void serveFileBlocking(final HttpServletRequest req, final HttpServletResponse resp, final Resource resource, HttpServerExchange exchange) throws IOException {
         final ETag etag = resource.getETag();
         final Date lastModified = resource.getLastModified();
         if(req.getDispatcherType() != DispatcherType.INCLUDE) {
@@ -340,7 +353,6 @@ public class DefaultServlet extends HttpServlet {
         }
         final boolean include = req.getDispatcherType() == DispatcherType.INCLUDE;
         if (!req.getMethod().equals(Methods.HEAD_STRING)) {
-            HttpServerExchange exchange = SecurityActions.requireCurrentServletRequestContext().getOriginalRequest().getExchange();
             if(rangeResponse == null) {
                 resource.serve(exchange.getResponseSender(), exchange, completionCallback(include));
             } else {

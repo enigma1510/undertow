@@ -21,6 +21,7 @@ package io.undertow.servlet.spec;
 import io.undertow.security.api.SecurityContext;
 import io.undertow.security.idm.Account;
 import io.undertow.server.HttpServerExchange;
+import io.undertow.server.RequestTooBigException;
 import io.undertow.server.handlers.form.FormData;
 import io.undertow.server.handlers.form.FormDataParser;
 import io.undertow.server.handlers.form.MultiPartParserDefinition;
@@ -46,7 +47,6 @@ import io.undertow.util.Headers;
 import io.undertow.util.HttpString;
 import io.undertow.util.LocaleUtils;
 import io.undertow.util.Methods;
-import org.xnio.LocalSocketAddress;
 
 import javax.servlet.AsyncContext;
 import javax.servlet.DispatcherType;
@@ -69,7 +69,6 @@ import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.SocketAddress;
 import java.nio.charset.Charset;
 import java.nio.charset.UnsupportedCharsetException;
 import java.security.AccessController;
@@ -88,6 +87,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
+import javax.servlet.MultipartConfigElement;
+
 /**
  * The http servlet request implementation. This class is not thread safe
  *
@@ -95,7 +96,8 @@ import java.util.Set;
  */
 public final class HttpServletRequestImpl implements HttpServletRequest {
 
-    private static final String HTTPS = "https";
+    @Deprecated
+    public static final AttachmentKey<Boolean> SECURE_REQUEST = HttpServerExchange.SECURE_REQUEST;
 
     private final HttpServerExchange exchange;
     private final ServletContextImpl originalServletContext;
@@ -109,14 +111,14 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     private Cookie[] cookies;
     private List<Part> parts = null;
     private volatile boolean asyncStarted = false;
+    private volatile boolean asyncCancelled = false;
     private volatile AsyncContextImpl asyncContext = null;
     private Map<String, Deque<String>> queryParameters;
     private FormData parsedFormData;
+    private RuntimeException formParsingException;
     private Charset characterEncoding;
     private boolean readStarted;
     private SessionConfig.SessionCookieSource sessionCookieSource;
-
-    public static final AttachmentKey<Boolean> SECURE_REQUEST = AttachmentKey.create(Boolean.class);
 
     public HttpServletRequestImpl(final HttpServerExchange exchange, final ServletContextImpl servletContext) {
         this.exchange = exchange;
@@ -465,14 +467,24 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     @Override
     public Collection<Part> getParts() throws IOException, ServletException {
+        verifyMultipartServlet();
         if (parts == null) {
             loadParts();
         }
         return parts;
     }
 
+    private void verifyMultipartServlet() {
+        ServletRequestContext src = exchange.getAttachment(ServletRequestContext.ATTACHMENT_KEY);
+        MultipartConfigElement multipart = src.getServletPathMatch().getServletChain().getManagedServlet().getMultipartConfig();
+        if(multipart == null) {
+            throw UndertowServletMessages.MESSAGES.multipartConfigNotPresent();
+        }
+    }
+
     @Override
     public Part getPart(final String name) throws IOException, ServletException {
+        verifyMultipartServlet();
         if (parts == null) {
             loadParts();
         }
@@ -763,6 +775,9 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     }
 
     private FormData parseFormData() {
+        if(formParsingException != null) {
+            throw formParsingException;
+        }
         if (parsedFormData == null) {
             if (readStarted) {
                 return null;
@@ -775,8 +790,12 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             readStarted = true;
             try {
                 return parsedFormData = parser.parseBlocking();
+            } catch (RequestTooBigException | MultiPartParserDefinition.FileTooLargeException e) {
+                throw formParsingException = new IllegalStateException(e);
+            } catch (RuntimeException e) {
+                throw formParsingException = e;
             } catch (IOException e) {
-                throw new RuntimeException(e);
+                throw formParsingException = new RuntimeException(e);
             }
         }
         return parsedFormData;
@@ -855,6 +874,10 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     @Override
     public void setAttribute(final String name, final Object object) {
+        if(object == null) {
+            removeAttribute(name);
+            return;
+        }
         if (attributes == null) {
             attributes = new HashMap<>();
         }
@@ -892,11 +915,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     @Override
     public boolean isSecure() {
-        Boolean secure = exchange.getAttachment(SECURE_REQUEST);
-        if(secure != null && secure) {
-            return true;
-        }
-        return getScheme().equalsIgnoreCase(HTTPS);
+        return exchange.isSecure();
     }
 
     @Override
@@ -932,22 +951,16 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     @Override
     public String getLocalAddr() {
-        SocketAddress address = exchange.getConnection().getLocalAddress();
-         if (address instanceof InetSocketAddress) {
-            return ((InetSocketAddress) address).getAddress().getHostAddress();
-        } else if (address instanceof LocalSocketAddress) {
-            return ((LocalSocketAddress) address).getName();
+        InetSocketAddress address = exchange.getDestinationAddress();
+         if (address != null) {
+            return address.getAddress().getHostAddress();
         }
         return null;
     }
 
     @Override
     public int getLocalPort() {
-        SocketAddress address = exchange.getConnection().getLocalAddress();
-        if (address instanceof InetSocketAddress) {
-            return ((InetSocketAddress) address).getPort();
-        }
-        return -1;
+        return exchange.getDestinationAddress().getPort();
     }
 
     @Override
@@ -988,12 +1001,14 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             throw UndertowServletMessages.MESSAGES.asyncAlreadyStarted();
         }
         asyncStarted = true;
+        servletRequestContext.setServletRequest(servletRequest);
+        servletRequestContext.setServletResponse(servletResponse);
         return asyncContext = new AsyncContextImpl(exchange, servletRequest, servletResponse, servletRequestContext, true, asyncContext);
     }
 
     @Override
     public boolean isAsyncStarted() {
-        return asyncStarted;
+        return asyncStarted || asyncCancelled;
     }
 
     @Override
@@ -1001,9 +1016,13 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         return exchange.getAttachment(ServletRequestContext.ATTACHMENT_KEY).isAsyncSupported();
     }
 
+    void setAsyncCancelled(boolean asyncCancelled) {
+        this.asyncCancelled = asyncCancelled;
+    }
+
     @Override
     public AsyncContextImpl getAsyncContext() {
-        if (!asyncStarted) {
+        if (!isAsyncStarted()) {
             throw UndertowServletMessages.MESSAGES.asyncNotStarted();
         }
         return asyncContext;

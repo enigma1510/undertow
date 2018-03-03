@@ -238,7 +238,7 @@ public class SslConduit implements StreamSourceConduit, StreamSinkConduit {
         if(anyAreSet(state, FLAG_READ_REQUIRES_WRITE)) {
             delegate.getSinkChannel().resumeWrites();
         } else {
-            if(anyAreSet(state, FLAG_DATA_TO_UNWRAP) || wakeup) {
+            if(anyAreSet(state, FLAG_DATA_TO_UNWRAP) || wakeup || unwrappedData != null) {
                 runReadListener(true);
             } else {
                 delegate.getSourceChannel().resumeReads();
@@ -260,7 +260,7 @@ public class SslConduit implements StreamSourceConduit, StreamSinkConduit {
             } else {
                 delegate.getIoThread().execute(runReadListenerCommand);
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             //will only happen on shutdown
             IoUtils.safeClose(connection, delegate);
             UndertowLogger.REQUEST_IO_LOGGER.debugf(e, "Failed to queue read listener invocation");
@@ -275,7 +275,7 @@ public class SslConduit implements StreamSourceConduit, StreamSinkConduit {
                     writeReadyHandler.writeReady();
                 }
             });
-        } catch (Exception e) {
+        } catch (Throwable e) {
             //will only happen on shutdown
             IoUtils.safeClose(connection, delegate);
             UndertowLogger.REQUEST_IO_LOGGER.debugf(e, "Failed to queue read listener invocation");
@@ -701,7 +701,7 @@ public class SslConduit implements StreamSourceConduit, StreamSinkConduit {
                 int res;
                 try {
                     res = source.read(dataToUnwrap.getBuffer());
-                } catch (IOException e) {
+                } catch (IOException | RuntimeException | Error e) {
                     dataToUnwrap.close();
                     dataToUnwrap = null;
                     throw e;
@@ -798,8 +798,13 @@ public class SslConduit implements StreamSourceConduit, StreamSinkConduit {
                 }
                 return res;
             }
-        } catch (RuntimeException|IOException e) {
-            close();
+        } catch (RuntimeException|IOException|Error e) {
+            try {
+                close();
+            } catch (Throwable ex) {
+                //we ignore this
+                UndertowLogger.REQUEST_LOGGER.debug("Exception closing SSLConduit after exception in doUnwrap", e);
+            }
             throw e;
         } finally {
             boolean requiresListenerInvocation = false; //if there is data in the buffer and reads are resumed we should re-run the listener
@@ -900,8 +905,12 @@ public class SslConduit implements StreamSourceConduit, StreamSinkConduit {
             }
 
             return result.bytesConsumed();
-        } catch (RuntimeException|IOException e) {
-            close();
+        } catch (RuntimeException|IOException|Error e) {
+            try {
+                close();
+            } catch (Throwable ex) {
+                UndertowLogger.REQUEST_LOGGER.debug("Exception closing SSLConduit after exception in doWrap()", ex);
+            }
             throw e;
         } finally {
             //this can be cleared if the channel is fully closed
@@ -1005,6 +1014,8 @@ public class SslConduit implements StreamSourceConduit, StreamSinkConduit {
                 engine.closeInbound();
             } catch (SSLException e) {
                 UndertowLogger.REQUEST_LOGGER.ioException(e);
+            } catch (Throwable t) {
+                UndertowLogger.REQUEST_LOGGER.handleUnexpectedFailure(t);
             }
         }
         IoUtils.safeClose(delegate);
@@ -1046,7 +1057,7 @@ public class SslConduit implements StreamSourceConduit, StreamSinkConduit {
                                                 --outstandingTasks;
                                                 try {
                                                     doHandshake();
-                                                } catch (IOException e) {
+                                                } catch (IOException | RuntimeException | Error e) {
                                                     IoUtils.safeClose(connection);
                                                 }
                                                 if (anyAreSet(state, FLAG_READS_RESUMED)) {
@@ -1100,6 +1111,9 @@ public class SslConduit implements StreamSourceConduit, StreamSinkConduit {
                     doHandshake();
                 } catch (IOException e) {
                     UndertowLogger.REQUEST_LOGGER.ioException(e);
+                    IoUtils.safeClose(delegate);
+                } catch (Throwable t) {
+                    UndertowLogger.REQUEST_IO_LOGGER.handleUnexpectedFailure(t);
                     IoUtils.safeClose(delegate);
                 } finally {
                     invokingReadListenerHandshake = false;
@@ -1211,6 +1225,9 @@ public class SslConduit implements StreamSourceConduit, StreamSinkConduit {
                         doHandshake();
                     } catch (IOException e) {
                         UndertowLogger.REQUEST_LOGGER.ioException(e);
+                        IoUtils.safeClose(delegate);
+                    } catch (Throwable t) {
+                        UndertowLogger.REQUEST_LOGGER.handleUnexpectedFailure(t);
                         IoUtils.safeClose(delegate);
                     }
                 }
